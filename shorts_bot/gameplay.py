@@ -243,7 +243,7 @@ class GameplayManager:
             "-m",
             "yt_dlp",
             "--extractor-args",
-            "youtube:player_client=tv,mweb",
+            "youtube:player_client=tv,android,mweb",
         ]
         if cookie_file:
             cmd_base.extend(["--cookies", str(cookie_file)])
@@ -313,12 +313,33 @@ class GameplayManager:
                 return target_path
             else:
                 logger.warning(
-                    "[Gameplay] Download failed for %s: %s",
+                    "[Gameplay] yt-dlp download failed for %s: %s, falling back to pytubefix...",
                     candidate_id,
                     dl_res.stderr[:200] if dl_res.stderr else "Unknown error",
                 )
         except Exception as exc:
             logger.warning("[Gameplay] Download execution error for %s: %s", candidate_id, exc)
+
+        # Fallback to pytubefix if yt-dlp failed or was blocked
+        try:
+            from pytubefix import YouTube
+            for yt_client in ("ANDROID", "TV", "MWEB"):
+                try:
+                    yt = YouTube(f"https://www.youtube.com/watch?v={candidate_id}", client=yt_client)
+                    prog = yt.streams.filter(progressive=True).order_by("resolution").desc().first()
+                    if prog:
+                        prog.download(output_path=str(cat_dir), filename=target_path.name)
+                        if target_path.exists() and target_path.stat().st_size > 0:
+                            logger.info(
+                                "[Gameplay] Successfully downloaded fresh %s video via pytubefix: %s",
+                                category,
+                                target_path.name,
+                            )
+                            return target_path
+                except Exception:
+                    continue
+        except Exception as pyfix_exc:
+            logger.warning("[Gameplay] pytubefix fallback for %s failed: %s", candidate_id, pyfix_exc)
 
         return None
 

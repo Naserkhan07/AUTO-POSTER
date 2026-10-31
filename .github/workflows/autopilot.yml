@@ -32,10 +32,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
+      - name: Start BGUtil PO Token Provider (Docker)
+        run: |
+          docker run --name bgutil-provider -d --init \
+            -p 127.0.0.1:4416:4416 \
+            brainicism/bgutil-ytdlp-pot-provider:latest
+          sleep 5
+          curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4416/ping || echo "POT Provider container started."
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade yt-dlp yt-dlp-ejs yt-dlp-getpot-wpc pytubefix
+          pip install --upgrade yt-dlp yt-dlp-ejs yt-dlp-getpot-wpc bgutil-ytdlp-pot-provider pytubefix
           pip install -e .
 
       - name: Setup YouTube Token
@@ -58,9 +66,17 @@ jobs:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           python -c '
+          import base64
           import os
-          cookies = os.environ.get("YOUTUBE_COOKIES", "").strip()
-          if cookies:
+          raw = os.environ.get("YOUTUBE_COOKIES", "").strip()
+          if raw:
+              cookies = raw
+              try:
+                  decoded = base64.b64decode(raw).decode("utf-8", errors="ignore")
+                  if "youtube.com" in decoded or "# Netscape" in decoded:
+                      cookies = decoded
+              except Exception:
+                  pass
               if not cookies.startswith("# Netscape"):
                   cookies = "# Netscape HTTP Cookie File\n" + cookies
               with open("cookies.txt", "w", encoding="utf-8") as f:
