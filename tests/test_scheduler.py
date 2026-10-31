@@ -62,3 +62,30 @@ def test_scheduler_daily_limits(tmp_path: Path) -> None:
 
     assert scheduler.get_daily_upload_count(repository, "YouTube", "2026-11-02") == 2
     assert scheduler.can_upload_today(repository, "YouTube", "2026-11-02") is False
+
+
+def test_scheduler_strict_slot_publishing(tmp_path: Path) -> None:
+    repository = JobRepository(tmp_path / "jobs.db")
+    scheduler = ContentScheduler()
+
+    # Monday 6:30 AM is a slot. Prep time is 6:00 AM.
+    # Case 1: At 6:15 AM (Advance prep window, 15m before slot) -> Should NOT upload yet
+    prep_time = datetime(2026, 11, 2, 6, 15)
+    should_up, reason = scheduler.should_upload_now(repository, "YouTube", prep_time)
+    assert should_up is False
+    assert "Advance prep window active" in reason
+
+    # Case 2: At 6:30 AM (Slot hits!) -> Should upload!
+    slot_time = datetime(2026, 11, 2, 6, 30)
+    should_up, reason = scheduler.should_upload_now(repository, "YouTube", slot_time)
+    assert should_up is True
+    assert "Scheduled slot active" in reason
+
+    # Simulate upload happened at 6:31 AM
+    repository.record_platform_upload("YouTube", 1, 1, "yt123", uploaded_at="2026-11-02T06:31:00Z")
+
+    # Case 3: At 6:35 AM -> Slot already fulfilled! Should NOT upload again, wait for 7:30 AM
+    after_time = datetime(2026, 11, 2, 6, 35)
+    should_up, reason = scheduler.should_upload_now(repository, "YouTube", after_time)
+    assert should_up is False
+    assert "already published" in reason or "Spacing interval active" in reason

@@ -288,6 +288,9 @@ async def run_file_queue(
                 await asyncio.sleep(min(settings.links_poll_seconds, 30))
                 continue
 
+            # Always check if any prepared/rendered clips are due for publication at the current scheduled slot
+            await retry_pending_jobs()
+
             urls = link_queue.pending_urls()
             processed_new_url = False
             for url in urls:
@@ -327,10 +330,6 @@ async def run_file_queue(
                 elif not watch:
                     # In --once mode, successfully processing 1 video creates enough clips for scheduled distribution.
                     break
-
-            if not processed_new_url and time.monotonic() >= next_pending_retry:
-                await retry_pending_jobs()
-                next_pending_retry = time.monotonic() + settings.credential_check_minutes * 60
 
             if not watch:
                 print(

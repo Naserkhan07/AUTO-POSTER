@@ -183,7 +183,9 @@ class WorkflowServices:
                         "YouTube": settings.scheduler_max_daily_youtube,
                         "Instagram": settings.scheduler_max_daily_instagram,
                         "Facebook": settings.scheduler_max_daily_facebook,
-                    }
+                    },
+                    advance_prep_minutes=settings.scheduler_advance_prep_minutes,
+                    timezone_str=settings.scheduler_timezone,
                 )
                 if settings.scheduler_enabled
                 else None

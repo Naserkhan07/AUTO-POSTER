@@ -164,6 +164,7 @@ class Settings:
     scheduler_max_daily_youtube: int = 10
     scheduler_max_daily_instagram: int = 10
     scheduler_max_daily_facebook: int = 10
+    scheduler_timezone: str = "Asia/Kolkata"
 
     @classmethod
     def from_env(
@@ -357,6 +358,10 @@ class Settings:
                 os.getenv("SCHEDULER_MAX_DAILY_FACEBOOK")
                 or scheduler_section.get("max_daily_facebook", 10)
             ),
+            scheduler_timezone=str(
+                os.getenv("SCHEDULER_TIMEZONE")
+                or scheduler_section.get("timezone", "Asia/Kolkata")
+            ).strip(),
         )
         settings.validate_common()
         return settings

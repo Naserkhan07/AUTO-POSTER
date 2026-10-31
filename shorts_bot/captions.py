@@ -15,6 +15,107 @@ COLOR_BLACK = "&H00000000&"  # Pure Black Outline
 
 DEFAULT_HIGHLIGHT_COLORS = (NEON_GREEN, NEON_YELLOW, NEON_CYAN)
 
+DEVANAGARI_VOWELS = {
+    '\u0904': 'e', '\u0905': 'a', '\u0906': 'aa', '\u0907': 'i', '\u0908': 'ee',
+    '\u0909': 'u', '\u090a': 'oo', '\u090b': 'ri', '\u090c': 'li', '\u090d': 'e',
+    '\u090e': 'e', '\u090f': 'e', '\u0910': 'ai', '\u0911': 'o', '\u0912': 'o',
+    '\u0913': 'o', '\u0914': 'au'
+}
+DEVANAGARI_MATRAS = {
+    '\u093e': 'aa', '\u093f': 'i', '\u0940': 'ee', '\u0941': 'u',
+    '\u0942': 'oo', '\u0943': 'ri', '\u0944': 'ri', '\u0945': 'e',
+    '\u0946': 'e', '\u0947': 'e', '\u0948': 'ai', '\u0949': 'o',
+    '\u094a': 'o', '\u094b': 'o', '\u094c': 'au'
+}
+DEVANAGARI_CONSONANTS = {
+    '\u0915': 'k', '\u0916': 'kh', '\u0917': 'g', '\u0918': 'gh', '\u0919': 'ng',
+    '\u091a': 'ch', '\u091b': 'chh', '\u091c': 'j', '\u091d': 'jh', '\u091e': 'ny',
+    '\u091f': 't', '\u0920': 'th', '\u0921': 'd', '\u0922': 'dh', '\u0923': 'n',
+    '\u0924': 't', '\u0925': 'th', '\u0926': 'd', '\u0927': 'dh', '\u0928': 'n',
+    '\u0929': 'nn', '\u092a': 'p', '\u092b': 'ph', '\u092c': 'b', '\u092d': 'bh',
+    '\u092e': 'm', '\u092f': 'y', '\u0930': 'r', '\u0931': 'rr', '\u0932': 'l',
+    '\u0933': 'l', '\u0934': 'll', '\u0935': 'v', '\u0936': 'sh', '\u0937': 'sh',
+    '\u0938': 's', '\u0939': 'h',
+    '\u0958': 'q', '\u0959': 'kh', '\u095a': 'gh', '\u095b': 'z', '\u095c': 'r',
+    '\u095d': 'rh', '\u095e': 'f', '\u095f': 'y'
+}
+VIRAMA = '\u094d'
+NUKTA = '\u093c'
+ANUSVARA = '\u0902'
+CHANDRABINDU = '\u0901'
+VISARGA = '\u0903'
+
+
+def devanagari_to_roman(text: str) -> str:
+    """
+    Transliterates Hindi text written in Devanagari script into readable Roman Hindi (Hinglish).
+    Leaves English and other scripts unchanged so they render with their original characters.
+    """
+    if not text or not any('\u0900' <= ch <= '\u097f' for ch in text):
+        return text
+
+    res: list[str] = []
+    i = 0
+    n = len(text)
+    word_delims = set(' \t\n\r.,!?;:"\'()[]{}<>-–—/\\|')
+
+    while i < n:
+        ch = text[i]
+        next_ch = text[i + 1] if i + 1 < n else ''
+
+        if next_ch == NUKTA:
+            nukta_map = {
+                '\u0915': 'q', '\u0916': 'kh', '\u0917': 'gh',
+                '\u091c': 'z', '\u0921': 'r', '\u0922': 'rh', '\u092b': 'f'
+            }
+            base = nukta_map.get(ch, DEVANAGARI_CONSONANTS.get(ch, ch))
+            i += 2
+            if i < n and text[i] == VIRAMA:
+                res.append(base)
+                i += 1
+            elif i < n and text[i] in DEVANAGARI_MATRAS:
+                res.append(base + DEVANAGARI_MATRAS[text[i]])
+                i += 1
+            else:
+                is_word_end = (i >= n or text[i] in word_delims)
+                res.append(base if is_word_end else base + 'a')
+            continue
+
+        if ch in DEVANAGARI_VOWELS:
+            res.append(DEVANAGARI_VOWELS[ch])
+            i += 1
+        elif ch in DEVANAGARI_CONSONANTS:
+            base = DEVANAGARI_CONSONANTS[ch]
+            i += 1
+            if i < n and text[i] == VIRAMA:
+                res.append(base)
+                i += 1
+            elif i < n and text[i] in DEVANAGARI_MATRAS:
+                res.append(base + DEVANAGARI_MATRAS[text[i]])
+                i += 1
+            else:
+                is_word_end = (i >= n or text[i] in word_delims)
+                res.append(base if is_word_end else base + 'a')
+        elif ch in DEVANAGARI_MATRAS:
+            res.append(DEVANAGARI_MATRAS[ch])
+            i += 1
+        elif ch in (ANUSVARA, CHANDRABINDU):
+            res.append('n')
+            i += 1
+        elif ch == VISARGA:
+            res.append('h')
+            i += 1
+        elif ch == VIRAMA:
+            i += 1
+        elif ch in ('\u0964', '\u0965'):
+            res.append('.')
+            i += 1
+        else:
+            res.append(ch)
+            i += 1
+
+    return ''.join(res)
+
 
 @dataclass(frozen=True, slots=True)
 class TimedWord:
@@ -84,7 +185,7 @@ def parse_whisper_result(
         raw_words = transcription_data.get("words")
         if isinstance(raw_words, list) and raw_words:
             for item in raw_words:
-                text = str(item.get("word", "")).strip()
+                text = devanagari_to_roman(str(item.get("word", "")).strip())
                 if text:
                     start = float(item.get("start", 0.0) or 0.0)
                     end = float(item.get("end", start + 0.3) or (start + 0.3))
@@ -99,7 +200,7 @@ def parse_whisper_result(
                 seg_words = seg.get("words")
                 if isinstance(seg_words, list) and seg_words:
                     for item in seg_words:
-                        text = str(item.get("word", "")).strip()
+                        text = devanagari_to_roman(str(item.get("word", "")).strip())
                         if text:
                             start = float(item.get("start", 0.0) or 0.0)
                             end = float(item.get("end", start + 0.3) or (start + 0.3))
@@ -109,7 +210,7 @@ def parse_whisper_result(
                     # Interpolate segment text across segment duration
                     seg_start = float(seg.get("start", 0.0) or 0.0)
                     seg_end = float(seg.get("end", seg_start + 1.0) or (seg_start + 1.0))
-                    text = str(seg.get("text", "")).strip()
+                    text = devanagari_to_roman(str(seg.get("text", "")).strip())
                     tokens = [w for w in text.split() if w]
                     if tokens:
                         total_dur = max(0.2, seg_end - seg_start)
@@ -122,7 +223,7 @@ def parse_whisper_result(
                 return words
 
         # 3. Fallback to text key
-        raw_text = str(transcription_data.get("text", "")).strip()
+        raw_text = devanagari_to_roman(str(transcription_data.get("text", "")).strip())
         if raw_text:
             return _parse_raw_text(raw_text)
 
@@ -154,8 +255,8 @@ def _parse_raw_text(text: str) -> list[TimedWord]:
         if m:
             start_s = float(m.group(1))
             end_s = float(m.group(2))
-            content = m.group(3).strip()
-            tokens = [t for t in content.split() if t]
+            content = devanagari_to_roman(m.group(3).strip())
+            tokens = [devanagari_to_roman(t) for t in content.split() if t]
             if tokens:
                 duration = max(0.2, end_s - start_s)
                 step = duration / len(tokens)
@@ -169,7 +270,7 @@ def _parse_raw_text(text: str) -> list[TimedWord]:
                     )
             current_time = end_s
         else:
-            tokens = [t for t in line.split() if t]
+            tokens = [devanagari_to_roman(t) for t in line.split() if t]
             for token in tokens:
                 words.append(TimedWord(text=token, start=current_time, end=current_time + 0.35))
                 current_time += 0.35
@@ -293,7 +394,7 @@ def build_ass_subtitles(
         chunk_end = max(chunk_start + 0.3, chunk[-1].end)
 
         # Build clean uppercase lines for the chunk (e.g. 2 lines of max_words_per_line)
-        chunk_texts = [w.text.upper() for w in chunk]
+        chunk_texts = [devanagari_to_roman(w.text).upper() for w in chunk]
 
         # For dynamic karaoke highlighting: emit an event for each active word interval
         # while keeping the full phrase visible!

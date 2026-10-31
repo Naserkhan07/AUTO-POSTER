@@ -10,8 +10,9 @@ Implements the user's optimal day-of-week timing charts:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -168,10 +169,43 @@ class ContentScheduler:
         daily_limits: dict[str, int] | None = None,
         advance_prep_minutes: int = 30,
         schedules: dict[str, dict[int, list[time]]] | None = None,
+        timezone_str: str = "Asia/Kolkata",
     ) -> None:
         self.daily_limits = dict(daily_limits or DEFAULT_DAILY_LIMITS)
         self.advance_prep_minutes = advance_prep_minutes
         self.schedules = schedules or OPTIMAL_SCHEDULES
+        self.timezone_str = timezone_str
+        self.tz = self._resolve_timezone(timezone_str)
+
+    @staticmethod
+    def _resolve_timezone(tz_name: str) -> timezone:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(tz_name)
+        except Exception:
+            pass
+        known = {
+            "Asia/Kolkata": timezone(timedelta(hours=5, minutes=30)),
+            "IST": timezone(timedelta(hours=5, minutes=30)),
+            "UTC": timezone.utc,
+        }
+        if tz_name in known:
+            return known[tz_name]
+        m = re.match(r"^([+-])(\d{1,2}):?(\d{2})?$", tz_name.strip())
+        if m:
+            sign = 1 if m.group(1) == "+" else -1
+            hrs = int(m.group(2))
+            mins = int(m.group(3) or 0)
+            return timezone(sign * timedelta(hours=hrs, minutes=mins))
+        return timezone(timedelta(hours=5, minutes=30))
+
+    def current_dt(self, override: datetime | None = None) -> datetime:
+        """Returns the current wall-clock datetime in the configured timezone."""
+        if override is not None:
+            if override.tzinfo is not None:
+                return override.astimezone(self.tz).replace(tzinfo=None)
+            return override
+        return datetime.now(self.tz).replace(tzinfo=None)
 
     def get_slots_for_day(self, platform: str, target_date: datetime) -> list[ScheduledSlot]:
         """Returns all scheduled slots for the given date and platform."""
@@ -199,7 +233,7 @@ class ContentScheduler:
         self, platform: str, current_time: datetime | None = None
     ) -> ScheduledSlot:
         """Finds the next upcoming upload slot for the platform."""
-        now = current_time or datetime.now()
+        now = self.current_dt(current_time)
         for day_offset in range(8):
             check_date = now + timedelta(days=day_offset)
             slots = self.get_slots_for_day(platform, check_date)
@@ -222,11 +256,29 @@ class ContentScheduler:
         """
         Returns True if we are inside the 30-minute preparation window before the next slot.
         """
-        now = current_time or datetime.now()
+        now = self.current_dt(current_time)
         slot = self.get_next_slot(platform, now)
         # Prep is due if now >= slot.prep_time and now < slot.target_time
         due = slot.prep_time <= now < slot.target_time
         return due, slot
+
+    def is_slot_active_for_publish(
+        self,
+        platform: str,
+        current_time: datetime | None = None,
+        window_minutes: int = 35,
+    ) -> tuple[bool, ScheduledSlot | None]:
+        """
+        Returns (True, slot) if now matches an active scheduled slot window.
+        """
+        now = self.current_dt(current_time)
+        slots_today = self.get_slots_for_day(platform, now)
+        for slot in slots_today:
+            start_window = slot.target_time - timedelta(minutes=2)
+            end_window = slot.target_time + timedelta(minutes=window_minutes)
+            if start_window <= now <= end_window:
+                return True, slot
+        return False, None
 
     def is_upload_window_open(
         self, platform: str, current_time: datetime | None = None, tolerance_minutes: int = 45
@@ -234,7 +286,7 @@ class ContentScheduler:
         """
         Returns True if the current time matches an upload slot within tolerance.
         """
-        now = current_time or datetime.now()
+        now = self.current_dt(current_time)
         slots_today = self.get_slots_for_day(platform, now)
         for slot in slots_today:
             diff = abs((now - slot.target_time).total_seconds()) / 60.0
@@ -289,10 +341,13 @@ class ContentScheduler:
         """
         Determines whether a video can be uploaded right now based on:
         1. Strict daily limit (min/max 10 uploads per day per platform).
-        2. Equal time distribution across scheduled slots (Morning, Afternoon, Evening peak windows).
-        3. Minimum interval spacing so clips are never blasted all at once.
+        2. Minimum interval spacing so clips are never blasted all at once (35 min).
+        3. Strict scheduled slot windows:
+           - Waking 30 minutes in advance: video is prepared and rendered, upload deferred until slot hits.
+           - At scheduled slot time: video is published!
+           - Outside scheduled slot: waiting for next scheduled slot.
         """
-        now = current_time or datetime.now()
+        now = self.current_dt(current_time)
         limit = self.daily_limits.get(platform, 10)
         target_date = now.strftime("%Y-%m-%d")
         count_today = self.get_daily_upload_count(repository, platform, target_date)
@@ -308,6 +363,8 @@ class ContentScheduler:
         if hasattr(repository, "get_last_platform_upload_time"):
             last_upload_time = repository.get_last_platform_upload_time(platform)
             if last_upload_time:
+                if last_upload_time.tzinfo is not None:
+                    last_upload_time = last_upload_time.astimezone(self.tz).replace(tzinfo=None)
                 elapsed_min = (now - last_upload_time).total_seconds() / 60.0
                 if elapsed_min < 35:
                     return (
@@ -315,22 +372,40 @@ class ContentScheduler:
                         f"Spacing interval active ({int(elapsed_min)}m since last upload; 35m minimum spacing required).",
                     )
 
-        # 3. Check time-of-day slots for today
-        slots_today = self.get_slots_for_day(platform, now)
-        past_or_current_slots = [
-            s for s in slots_today if s.target_time <= now + timedelta(minutes=25)
-        ]
-        allowed_count = min(limit, len(past_or_current_slots))
+        # 3. Check if currently in an active scheduled slot's publish window
+        is_active, active_slot = self.is_slot_active_for_publish(platform, now, window_minutes=35)
 
-        if count_today >= allowed_count:
+        if not is_active or active_slot is None:
+            # Check if advance preparation window is active (30m before upcoming slot)
+            is_prep, prep_slot = self.is_prep_due(platform, now)
+            if is_prep:
+                target_12h = prep_slot.target_time.strftime("%I:%M %p")
+                return (
+                    False,
+                    f"Advance prep window active ({target_12h}). Video rendered in advance; waiting for scheduled slot to publish.",
+                )
             next_slot = self.get_next_slot(platform, now)
             next_12h = next_slot.target_time.strftime("%I:%M %p")
             return (
                 False,
-                f"Waiting for next scheduled window: {next_12h} ({count_today}/{limit} uploaded today).",
+                f"Outside scheduled upload window. Next scheduled slot at {next_12h} ({count_today}/{limit} uploaded today).",
             )
+
+        # Active slot window is open! Check if an upload already occurred for this slot
+        if hasattr(repository, "get_last_platform_upload_time"):
+            last_upload_time = repository.get_last_platform_upload_time(platform)
+            if last_upload_time:
+                if last_upload_time.tzinfo is not None:
+                    last_upload_time = last_upload_time.astimezone(self.tz).replace(tzinfo=None)
+                if last_upload_time >= active_slot.target_time - timedelta(minutes=5):
+                    next_slot = self.get_next_slot(platform, now)
+                    next_12h = next_slot.target_time.strftime("%I:%M %p")
+                    return (
+                        False,
+                        f"Slot {active_slot.target_time.strftime('%I:%M %p')} already published. Waiting for next window at {next_12h}.",
+                    )
 
         return (
             True,
-            f"Scheduled slot active. Uploading video #{count_today + 1} of {limit} for today.",
+            f"Scheduled slot active ({active_slot.target_time.strftime('%I:%M %p')}). Publishing video #{count_today + 1} of {limit} for today.",
         )

@@ -102,6 +102,24 @@ class CaptionsTestCase(unittest.TestCase):
             self.assertTrue(res.exists())
             self.assertGreater(res.stat().st_size, 50)
 
+    def test_devanagari_hindi_to_roman_captions(self) -> None:
+        hindi_data = {
+            "words": [
+                {"word": "नमस्ते", "start": 0.0, "end": 0.5},
+                {"word": "दोस्तों", "start": 0.5, "end": 1.0},
+            ]
+        }
+        words = parse_whisper_result(hindi_data)
+        self.assertEqual(len(words), 2)
+        self.assertEqual(words[0].text, "namaste")
+        self.assertEqual(words[1].text, "doston")
+
+        ass_content = build_ass_subtitles(words, clip_start=0.0, clip_duration=5.0)
+        self.assertIn("NAMASTE", ass_content)
+        self.assertIn("DOSTON", ass_content)
+        # Verify no raw Devanagari Unicode characters exist in the output subtitles
+        self.assertFalse(any("\u0900" <= ch <= "\u097f" for ch in ass_content))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,8 +31,16 @@ def format_12h_time(iso_or_dt: str) -> str:
 
 
 def get_dashboard_data(db_path: Path, settings: Settings) -> dict[str, Any]:
-    scheduler = ContentScheduler()
-    now = datetime.now()
+    scheduler = ContentScheduler(
+        daily_limits={
+            "YouTube": settings.scheduler_max_daily_youtube,
+            "Instagram": settings.scheduler_max_daily_instagram,
+            "Facebook": settings.scheduler_max_daily_facebook,
+        },
+        advance_prep_minutes=settings.scheduler_advance_prep_minutes,
+        timezone_str=settings.scheduler_timezone,
+    )
+    now = scheduler.current_dt()
 
     # Get slots for today
     yt_slots = scheduler.get_slots_for_day("YouTube", now)
