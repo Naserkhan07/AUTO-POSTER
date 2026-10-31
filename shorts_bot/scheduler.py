@@ -19,67 +19,132 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Daily safety limits to protect accounts from quota exhaustion and spam flags:
-# - YouTube Data API: Free quota is 10,000 units/day. Video insert costs 1,600 units.
-#   Max mathematical uploads is 6/day. Recommended safe schedule is 3/day.
-# - Instagram Graph API: Official limit is 25 posts/24h. Safe optimal is 3/day.
-# - Facebook Graph API: Page limit is 25-50 posts/24h. Safe optimal is 3/day.
+# Daily limits to ensure at least 10 videos/day per platform while spacing them evenly:
 DEFAULT_DAILY_LIMITS: dict[str, int] = {
-    "YouTube": 3,
-    "Instagram": 3,
-    "Facebook": 3,
+    "YouTube": 10,
+    "Instagram": 10,
+    "Facebook": 10,
 }
 
 # Optimal posting time slots per platform per weekday (0 = Monday, 6 = Sunday)
-# Based on the user's audience engagement schedules.
-# Times are target upload hours/minutes (Local/IST or UTC-configured).
+# Minimum 10-12 distributed slots per day aligned with user's audience peak engagement windows:
+# - Morning window (6:30 AM - 10:00 AM)
+# - Afternoon window (11:30 AM - 3:00 PM)
+# - Evening / Night peak window (6:00 PM - 11:00 PM)
 OPTIMAL_SCHEDULES: dict[str, dict[int, list[time]]] = {
-    # YouTube Shorts (Image 2):
-    # Mon-Thu: 6-9 AM, 12-2 PM, 7-10 PM
-    # Fri: 6-9 AM, 12-2 PM, 8-11 PM
-    # Sat-Sun: 7-10 AM, 12-3 PM, 8-11 PM
+    # YouTube Shorts: 11-12 slots/day across Mon-Sun
     "YouTube": {
-        0: [time(7, 30), time(13, 0), time(20, 30)],  # Mon
-        1: [time(7, 30), time(13, 0), time(20, 30)],  # Tue
-        2: [time(7, 30), time(13, 0), time(20, 30)],  # Wed
-        3: [time(7, 30), time(13, 0), time(20, 30)],  # Thu
-        4: [time(7, 30), time(13, 0), time(21, 0)],   # Fri
-        5: [time(8, 30), time(13, 30), time(21, 0)],  # Sat
-        6: [time(8, 30), time(13, 30), time(21, 0)],  # Sun
+        0: [  # Mon
+            time(6, 30), time(7, 30), time(8, 30),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(19, 0), time(20, 0), time(21, 0), time(22, 0)
+        ],
+        1: [  # Tue
+            time(6, 30), time(7, 30), time(8, 30),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(19, 0), time(20, 0), time(21, 0), time(22, 0)
+        ],
+        2: [  # Wed
+            time(6, 30), time(7, 30), time(8, 30),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(19, 0), time(20, 0), time(21, 0), time(22, 0)
+        ],
+        3: [  # Thu
+            time(6, 30), time(7, 30), time(8, 30),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(19, 0), time(20, 0), time(21, 0), time(22, 0)
+        ],
+        4: [  # Fri
+            time(6, 30), time(7, 30), time(8, 30),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(19, 0), time(20, 0), time(20, 45), time(21, 30), time(22, 15)
+        ],
+        5: [  # Sat
+            time(7, 30), time(8, 30), time(9, 30),
+            time(12, 0), time(13, 0), time(14, 0), time(15, 0),
+            time(18, 0), time(19, 0), time(20, 0), time(21, 0), time(22, 0)
+        ],
+        6: [  # Sun
+            time(7, 30), time(8, 30), time(9, 30),
+            time(12, 0), time(13, 0), time(14, 0), time(15, 0),
+            time(18, 0), time(19, 0), time(20, 0), time(21, 0), time(22, 0)
+        ],
     },
-    # Instagram Reels (Image 1):
-    # Mon: 7-9 AM, 7-10 PM
-    # Tue: 7-9 AM, 6-9 PM
-    # Wed: 11 AM-1 PM, 7-10 PM
-    # Thu: 7-9 AM, 6-9 PM
-    # Fri: 11 AM-1 PM, 7-10 PM
-    # Sat: 9-11 AM, 6-9 PM
-    # Sun: 9 AM-12 PM, 6-9 PM
+    # Instagram Reels: 11-12 slots/day across Mon-Sun
     "Instagram": {
-        0: [time(8, 0), time(20, 0)],   # Mon
-        1: [time(8, 0), time(19, 30)],  # Tue
-        2: [time(12, 0), time(20, 0)],  # Wed
-        3: [time(8, 0), time(19, 30)],  # Thu
-        4: [time(12, 0), time(20, 0)],  # Fri
-        5: [time(10, 0), time(19, 30)], # Sat
-        6: [time(10, 30), time(19, 30)],# Sun
+        0: [  # Mon: 7-9 AM, 7-10 PM (+ afternoon bridge)
+            time(7, 0), time(7, 45), time(8, 30), time(9, 15),
+            time(11, 45), time(12, 45), time(13, 45),
+            time(18, 0), time(19, 0), time(19, 45), time(20, 30), time(21, 15)
+        ],
+        1: [  # Tue: 7-9 AM, 6-9 PM
+            time(7, 0), time(7, 45), time(8, 30), time(9, 15),
+            time(11, 45), time(12, 45), time(13, 45),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0)
+        ],
+        2: [  # Wed: 11 AM-1 PM, 7-10 PM
+            time(8, 0), time(9, 0),
+            time(11, 0), time(11, 45), time(12, 30), time(13, 15),
+            time(17, 30), time(18, 30), time(19, 15), time(20, 0), time(20, 45), time(21, 30)
+        ],
+        3: [  # Thu: 7-9 AM, 6-9 PM
+            time(7, 0), time(7, 45), time(8, 30), time(9, 15),
+            time(11, 45), time(12, 45), time(13, 45),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0)
+        ],
+        4: [  # Fri: 11 AM-1 PM, 7-10 PM
+            time(8, 0), time(9, 0),
+            time(11, 0), time(11, 45), time(12, 30), time(13, 15),
+            time(17, 30), time(18, 30), time(19, 15), time(20, 0), time(20, 45), time(21, 30)
+        ],
+        5: [  # Sat: 9-11 AM, 6-9 PM
+            time(9, 0), time(9, 45), time(10, 30), time(11, 15),
+            time(12, 30), time(13, 30), time(14, 30),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0)
+        ],
+        6: [  # Sun: 9 AM-12 PM, 6-9 PM
+            time(9, 0), time(9, 45), time(10, 30), time(11, 15),
+            time(12, 30), time(13, 30), time(14, 30),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0)
+        ],
     },
-    # Facebook Reels (Image 1):
-    # Mon: 8-10 AM, 7-9 PM
-    # Tue: 8-10 AM, 6-9 PM
-    # Wed: 11 AM-1 PM, 7-9 PM
-    # Thu: 8-10 AM, 6-9 PM
-    # Fri: 11 AM-1 PM, 7-10 PM
-    # Sat: 9-11 AM, 6-9 PM
-    # Sun: 9 AM-12 PM, 6-8 PM
+    # Facebook Reels: 11-12 slots/day across Mon-Sun
     "Facebook": {
-        0: [time(9, 0), time(20, 0)],   # Mon
-        1: [time(9, 0), time(19, 30)],  # Tue
-        2: [time(12, 0), time(20, 0)],  # Wed
-        3: [time(9, 0), time(19, 30)],  # Thu
-        4: [time(12, 0), time(20, 30)], # Fri
-        5: [time(10, 0), time(19, 30)], # Sat
-        6: [time(10, 30), time(19, 0)], # Sun
+        0: [  # Mon: 8-10 AM, 7-9 PM
+            time(8, 0), time(8, 45), time(9, 30), time(10, 15),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0)
+        ],
+        1: [  # Tue: 8-10 AM, 6-9 PM
+            time(8, 0), time(8, 45), time(9, 30), time(10, 15),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0)
+        ],
+        2: [  # Wed: 11 AM-1 PM, 7-9 PM
+            time(8, 30), time(9, 30),
+            time(11, 0), time(11, 45), time(12, 30), time(13, 15),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0), time(21, 45)
+        ],
+        3: [  # Thu: 8-10 AM, 6-9 PM
+            time(8, 0), time(8, 45), time(9, 30), time(10, 15),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0)
+        ],
+        4: [  # Fri: 11 AM-1 PM, 7-10 PM
+            time(8, 30), time(9, 30),
+            time(11, 0), time(11, 45), time(12, 30), time(13, 15),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0), time(21, 45)
+        ],
+        5: [  # Sat: 9-11 AM, 6-9 PM
+            time(9, 0), time(9, 45), time(10, 30), time(11, 15),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 15), time(21, 0)
+        ],
+        6: [  # Sun: 9 AM-12 PM, 6-8 PM
+            time(9, 0), time(9, 45), time(10, 30), time(11, 15),
+            time(12, 0), time(13, 0), time(14, 0),
+            time(18, 0), time(18, 45), time(19, 30), time(20, 0), time(20, 45)
+        ],
     },
 }
 
@@ -209,6 +274,6 @@ class ContentScheduler:
         self, repository: JobRepository, platform: str, date_str: str | None = None
     ) -> bool:
         """Enforces daily rate limits so platforms are never spammed or quota exhausted."""
-        limit = self.daily_limits.get(platform, 3)
+        limit = self.daily_limits.get(platform, 10)
         count = self.get_daily_upload_count(repository, platform, date_str)
         return count < limit

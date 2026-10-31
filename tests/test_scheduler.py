@@ -11,35 +11,35 @@ from shorts_bot.scheduler import ContentScheduler, ScheduledSlot
 def test_scheduler_slots_for_monday() -> None:
     scheduler = ContentScheduler()
     # 2026-11-02 is a Monday
-    monday = datetime(2026, 11, 2, 6, 0)
+    monday = datetime(2026, 11, 2, 5, 0)
     yt_slots = scheduler.get_slots_for_day("YouTube", monday)
     ig_slots = scheduler.get_slots_for_day("Instagram", monday)
     fb_slots = scheduler.get_slots_for_day("Facebook", monday)
 
-    assert len(yt_slots) == 3
-    # 7:30, 13:00, 20:30
-    assert yt_slots[0].target_time.time() == time(7, 30)
-    assert yt_slots[0].prep_time.time() == time(7, 0)  # 30m advance prep!
+    # Minimum 10 slots per day
+    assert len(yt_slots) >= 10
+    assert yt_slots[0].target_time.time() == time(6, 30)
+    assert yt_slots[0].prep_time.time() == time(6, 0)  # 30m advance prep!
 
-    assert len(ig_slots) == 2
-    assert ig_slots[0].target_time.time() == time(8, 0)
-    assert ig_slots[0].prep_time.time() == time(7, 30)
+    assert len(ig_slots) >= 10
+    assert ig_slots[0].target_time.time() == time(7, 0)
+    assert ig_slots[0].prep_time.time() == time(6, 30)
 
-    assert len(fb_slots) == 2
-    assert fb_slots[0].target_time.time() == time(9, 0)
-    assert fb_slots[0].prep_time.time() == time(8, 30)
+    assert len(fb_slots) >= 10
+    assert fb_slots[0].target_time.time() == time(8, 0)
+    assert fb_slots[0].prep_time.time() == time(7, 30)
 
 
 def test_scheduler_prep_due_30m_before() -> None:
     scheduler = ContentScheduler()
-    # 2026-11-02 Monday at 7:10 AM -> 7:30 slot has prep_time at 7:00 AM
-    current = datetime(2026, 11, 2, 7, 10)
+    # 2026-11-02 Monday at 6:10 AM -> 6:30 slot has prep_time at 6:00 AM
+    current = datetime(2026, 11, 2, 6, 10)
     due, slot = scheduler.is_prep_due("YouTube", current)
     assert due is True
-    assert slot.target_time.time() == time(7, 30)
+    assert slot.target_time.time() == time(6, 30)
 
-    # At 6:45 AM, prep is not due yet
-    earlier = datetime(2026, 11, 2, 6, 45)
+    # At 5:45 AM, prep is not due yet
+    earlier = datetime(2026, 11, 2, 5, 45)
     due_early, _ = scheduler.is_prep_due("YouTube", earlier)
     assert due_early is False
 
