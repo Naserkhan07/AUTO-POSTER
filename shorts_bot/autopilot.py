@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -140,24 +142,72 @@ class AutopilotService:
             enabled=settings.autopilot_enabled,
         )
 
+    def _fetch_channel_videos_ytdlp(
+        self, channel: AutopilotChannel, max_results: int = 5
+    ) -> list[AutopilotVideo]:
+        """Fetch latest channel videos using yt-dlp to bypass cloud datacenter IP blocks."""
+        url = f"https://www.youtube.com/channel/{channel.channel_id}/videos"
+        cmd = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--flat-playlist",
+            "--playlist-end",
+            str(max_results),
+            "--dump-json",
+            url,
+        ]
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+            if res.returncode != 0:
+                logger.warning("yt-dlp fallback failed for %s: %s", channel.name, res.stderr[:200])
+                return []
+            videos: list[AutopilotVideo] = []
+            for line in res.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    vid = data.get("id")
+                    title = data.get("title", "")
+                    if vid:
+                        videos.append(
+                            AutopilotVideo(
+                                video_id=vid,
+                                title=title,
+                                published_at=str(data.get("upload_date") or ""),
+                                link=f"https://www.youtube.com/watch?v={vid}",
+                                is_short=False,
+                                channel_name=channel.name,
+                                channel_id=channel.channel_id,
+                            )
+                        )
+                except Exception:
+                    continue
+            return videos
+        except Exception as exc:
+            logger.warning("yt-dlp execution error for %s: %s", channel.name, exc)
+            return []
+
     def fetch_channel_videos(
         self, channel: AutopilotChannel, timeout: float = 15.0
     ) -> list[AutopilotVideo]:
-        """Fetch the latest up to 15 entries from the channel's YouTube Atom RSS feed."""
+        """Fetch the latest up to 15 entries from the channel's YouTube Atom RSS feed, falling back to yt-dlp."""
         url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel.channel_id}"
         req = urllib.request.Request(url, headers=_DEFAULT_HEADERS)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 content = resp.read()
         except Exception as exc:
-            logger.warning("Autopilot failed fetching feed for %s: %s", channel.name, exc)
-            return []
+            logger.info("RSS feed unavailable for %s (%s); trying yt-dlp fallback...", channel.name, exc)
+            return self._fetch_channel_videos_ytdlp(channel)
 
         try:
             root = ET.fromstring(content)
         except ET.ParseError as exc:
-            logger.warning("Autopilot failed parsing XML for %s: %s", channel.name, exc)
-            return []
+            logger.info("XML parse failed for %s (%s); trying yt-dlp fallback...", channel.name, exc)
+            return self._fetch_channel_videos_ytdlp(channel)
 
         ns = {"atom": _ATOM_NS, "yt": _YT_NS}
         videos: list[AutopilotVideo] = []
@@ -187,6 +237,9 @@ class AutopilotService:
                     channel_id=channel.channel_id,
                 )
             )
+
+        if not videos:
+            return self._fetch_channel_videos_ytdlp(channel)
 
         return videos
 

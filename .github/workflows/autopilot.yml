@@ -49,3 +49,25 @@ jobs:
           UPLOAD_YOUTUBE: ${{ secrets.YOUTUBE_TOKEN_JSON != '' && 'true' || 'false' }}
         run: |
           python main.py --once
+
+      - name: Publish Live Mission Control Dashboard to GitHub Summary
+        if: always()
+        run: |
+          python dashboard.py --summary >> $GITHUB_STEP_SUMMARY
+          python dashboard.py --html public/index.html
+
+      - name: Upload Live Dashboard Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-mission-control-dashboard
+          path: public/index.html
+
+      - name: Sync Updated Queue and Logs to GitHub
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add links.txt work/downloaded-links.log || true
+          git commit -m "chore(autopilot): update links.txt queue [skip ci]" || true
+          git push || true

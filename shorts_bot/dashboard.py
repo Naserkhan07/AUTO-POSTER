@@ -18,6 +18,18 @@ from .config import Settings
 from .scheduler import ContentScheduler
 
 
+def format_12h_time(iso_or_dt: str) -> str:
+    """Converts ISO or standard timestamp string to 12-hour AM/PM format."""
+    if not iso_or_dt:
+        return ""
+    try:
+        clean = iso_or_dt.replace("Z", "+00:00").split(".")[0]
+        dt = datetime.fromisoformat(clean)
+        return dt.strftime("%b %d, %I:%M %p")
+    except Exception:
+        return iso_or_dt
+
+
 def get_dashboard_data(db_path: Path, settings: Settings) -> dict[str, Any]:
     scheduler = ContentScheduler()
     now = datetime.now()
@@ -58,6 +70,7 @@ def get_dashboard_data(db_path: Path, settings: Settings) -> dict[str, Any]:
                     """
                 ).fetchall()
                 for r in rows:
+                    created_at_raw = str(r["created_at"])
                     uploaded_clips.append(
                         {
                             "job_id": r["job_id"],
@@ -66,7 +79,8 @@ def get_dashboard_data(db_path: Path, settings: Settings) -> dict[str, Any]:
                             "youtube_video_id": r["youtube_video_id"],
                             "instagram_url": r["instagram_url"],
                             "facebook_url": r["facebook_url"],
-                            "created_at": r["created_at"],
+                            "created_at": created_at_raw,
+                            "created_at_12h": format_12h_time(created_at_raw),
                         }
                     )
 
@@ -87,6 +101,7 @@ def get_dashboard_data(db_path: Path, settings: Settings) -> dict[str, Any]:
                             "title": sr["title"],
                             "published_at": sr["published_at"],
                             "seen_at": sr["seen_at"],
+                            "seen_at_12h": format_12h_time(str(sr["seen_at"])),
                             "queued": bool(sr["queued"]),
                         }
                     )
@@ -106,7 +121,8 @@ def get_dashboard_data(db_path: Path, settings: Settings) -> dict[str, Any]:
             pass
 
     return {
-        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": now.strftime("%I:%M:%S %p"),
+        "date_12h": now.strftime("%b %d, %Y - %I:%M %p"),
         "today_name": now.strftime("%A"),
         "channels": list(settings.autopilot_channels),
         "pending_links": pending_links,
@@ -130,6 +146,57 @@ def get_dashboard_data(db_path: Path, settings: Settings) -> dict[str, Any]:
             },
         },
     }
+
+
+def render_markdown_dashboard(data: dict[str, Any]) -> str:
+    """Renders a rich markdown dashboard for GitHub Actions Job Summaries ($GITHUB_STEP_SUMMARY)."""
+    yt = data["schedules"]["YouTube"]
+    ig = data["schedules"]["Instagram"]
+    fb = data["schedules"]["Facebook"]
+
+    md: list[str] = []
+    md.append("# 🚀 AUTO-POSTER Live Mission Control")
+    md.append(f"**Live Server Time (12-Hour Clock):** `{data['date_12h']}` | **Status:** ✅ `Running 24/7`\n")
+
+    md.append("### 📅 Today's 12-Hour Upload Schedule (Min 10 Uploads Target)")
+    md.append("| Platform | Next Upload Window | 30m Auto-Prep Status | Today's Slots (12-Hour AM/PM) |")
+    md.append("| :--- | :--- | :--- | :--- |")
+    md.append(f"| **YouTube Shorts** | **{yt['next_slot']}** | {'⚡ Auto-Prep Active' if yt['prep_due'] else 'Standby'} | {', '.join(yt['slots_today'])} |")
+    md.append(f"| **Instagram Reels** | **{ig['next_slot']}** | {'⚡ Auto-Prep Active' if ig['prep_due'] else 'Standby'} | {', '.join(ig['slots_today'])} |")
+    md.append(f"| **Facebook Reels** | **{fb['next_slot']}** | {'⚡ Auto-Prep Active' if fb['prep_due'] else 'Standby'} | {', '.join(fb['slots_today'])} |")
+    md.append("")
+
+    md.append("### 🎬 Recently Published Videos & Live Links")
+    if data["uploaded_clips"]:
+        md.append("| Video Title | Published (12-Hour) | Direct Platform Links |")
+        md.append("| :--- | :--- | :--- |")
+        for c in data["uploaded_clips"][:10]:
+            links: list[str] = []
+            if c.get("youtube_video_id"):
+                links.append(f"[🔴 YouTube Short](https://www.youtube.com/shorts/{c['youtube_video_id']})")
+            if c.get("instagram_url"):
+                links.append(f"[🟣 Instagram Reel]({c['instagram_url']})")
+            if c.get("facebook_url"):
+                links.append(f"[🔵 Facebook Reel]({c['facebook_url']})")
+            link_str = " • ".join(links) or "Processing"
+            time_str = c.get("created_at_12h") or c["created_at"]
+            md.append(f"| **{c['title']}** | {time_str} | {link_str} |")
+    else:
+        md.append("> *No uploaded clips in database yet. Scheduled runs will populate direct live links here automatically.*")
+    md.append("")
+
+    md.append(f"### 📡 Monitored Creator Channels ({len(data['channels'])})")
+    channel_list = [f"`{ch.get('name', 'Channel')}`" for ch in data["channels"]]
+    md.append(" • ".join(channel_list))
+    md.append("")
+
+    if data["pending_links"]:
+        md.append(f"### 📋 Staging Queue (`links.txt` - {len(data['pending_links'])} Videos Ready)")
+        for pl in data["pending_links"][:5]:
+            md.append(f"- {pl}")
+    md.append("")
+
+    return "\n".join(md)
 
 
 def render_html_dashboard(data: dict[str, Any]) -> str:
@@ -362,3 +429,4 @@ def run_dashboard(port: int = 5050) -> None:
 
 if __name__ == "__main__":
     run_dashboard()
+
