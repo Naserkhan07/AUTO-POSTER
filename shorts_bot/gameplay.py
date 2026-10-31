@@ -15,21 +15,42 @@ logger = logging.getLogger(__name__)
 SUPPORTED_CATEGORIES = ("gta5", "minecraft", "subway_surfers")
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
 
+VERIFIED_GAMEPLAY_SOURCES: dict[str, list[dict[str, str]]] = {
+    "gta5": [
+        {"id": "ZtLrNBdXT7M", "url": "https://www.youtube.com/watch?v=ZtLrNBdXT7M", "title": "GTA 5 Mega Ramp Stunts"},
+        {"id": "74voi0vlxHE", "url": "https://www.youtube.com/watch?v=74voi0vlxHE", "title": "GTA 5 Stunt Race"},
+        {"id": "j34uP8pL1V4", "url": "https://www.youtube.com/watch?v=j34uP8pL1V4", "title": "GTA 5 Car Parkour"},
+        {"id": "l7arSZ41e_0", "url": "https://www.youtube.com/watch?v=l7arSZ41e_0", "title": "GTA 5 Impossible Ramp"},
+    ],
+    "minecraft": [
+        {"id": "XBIaqOm0RKQ", "url": "https://www.youtube.com/watch?v=XBIaqOm0RKQ", "title": "Minecraft Parkour Gameplay"},
+        {"id": "u7kdVe8q5zs", "url": "https://www.youtube.com/watch?v=u7kdVe8q5zs", "title": "Minecraft Speed Parkour"},
+        {"id": "intRX7BRA90", "url": "https://www.youtube.com/watch?v=intRX7BRA90", "title": "Minecraft Spiral Parkour"},
+        {"id": "n_Dv4JMiwK8", "url": "https://www.youtube.com/watch?v=n_Dv4JMiwK8", "title": "Minecraft Dropper Gameplay"},
+    ],
+    "subway_surfers": [
+        {"id": "qKLi8rkRauU", "url": "https://www.youtube.com/watch?v=qKLi8rkRauU", "title": "Subway Surfers Gameplay 60fps"},
+        {"id": "QPW3XwBoQlw", "url": "https://www.youtube.com/watch?v=QPW3XwBoQlw", "title": "Subway Surfers High Score Run"},
+        {"id": "fS3J2hFhU8E", "url": "https://www.youtube.com/watch?v=fS3J2hFhU8E", "title": "Subway Surfers Tokyo Run"},
+        {"id": "k1lPqC3yG48", "url": "https://www.youtube.com/watch?v=k1lPqC3yG48", "title": "Subway Surfers Endless Run"},
+    ],
+}
+
 DEFAULT_GAMEPLAY_SOURCES: dict[str, dict[str, str]] = {
     "gta5": {
         "url": "https://www.youtube.com/watch?v=ZtLrNBdXT7M",
         "filename": "gta5_gameplay.mp4",
-        "search_query": "ytsearch1:gta 5 mega ramp car stunts gameplay no copyright",
+        "search_query": "ytsearch25:gta 5 mega ramp car stunts gameplay no copyright 1080p 60fps",
     },
     "minecraft": {
         "url": "https://www.youtube.com/watch?v=XBIaqOm0RKQ",
         "filename": "minecraft_parkour_gameplay.mp4",
-        "search_query": "ytsearch1:minecraft parkour gameplay no copyright shorts 60fps",
+        "search_query": "ytsearch25:minecraft parkour gameplay no copyright 1080p 60fps",
     },
     "subway_surfers": {
         "url": "https://www.youtube.com/watch?v=qKLi8rkRauU",
         "filename": "subway_surfers_gameplay.mp4",
-        "search_query": "ytsearch1:subway surfers gameplay no copyright 60fps",
+        "search_query": "ytsearch25:subway surfers gameplay no copyright 1080p 60fps",
     },
 }
 
@@ -192,65 +213,87 @@ class GameplayManager:
         Searches YouTube for a fresh No-Copyright gameplay video for this category,
         skipping any video that was already used. Downloads the first fresh video.
         """
+        import os
         import sys
-
-        actual_ytdlp = shutil.which(ytdlp_path) or (
-            str(Path(sys.executable).parent / "yt-dlp.exe")
-            if sys.platform == "win32"
-            else None
-        )
-        if not actual_ytdlp:
-            return None
-
-        info = DEFAULT_GAMEPLAY_SOURCES.get(category)
-        query = (
-            info["search_query"].replace("ytsearch1:", "ytsearch20:")
-            if info
-            else f"ytsearch20:{category} gameplay no copyright 60fps"
-        )
 
         used = set(exclude_ids or set()) | self.get_used_identifiers(category)
         cat_dir = self.base_dir / category
         cat_dir.mkdir(parents=True, exist_ok=True)
         for f in cat_dir.iterdir():
-            if f.is_file():
+            if f.is_file() and not f.name.startswith("procedural_"):
                 used.add(f.stem)
                 used.add(f.name)
 
+        search_terms = {
+            "gta5": "gta 5 mega ramp car stunts gameplay no copyright 1080p 60fps",
+            "minecraft": "minecraft parkour gameplay no copyright 1080p 60fps",
+            "subway_surfers": "subway surfers gameplay no copyright 1080p 60fps",
+        }
+        term = search_terms.get(category, f"{category} gameplay no copyright 1080p 60fps")
+        query = f"ytsearch25:{term}"
+
+        cookie_file = None
+        for cand in [os.environ.get("YTDLP_COOKIE_FILE"), "cookies.txt", "youtube-cookies.txt"]:
+            if cand and Path(cand).exists():
+                cookie_file = cand
+                break
+
+        cmd_base = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--extractor-args",
+            "youtube:player_client=tv,mweb",
+        ]
+        if cookie_file:
+            cmd_base.extend(["--cookies", str(cookie_file)])
+
+        candidate_id: str | None = None
         logger.info(
             "[Gameplay] Searching YouTube for new %s footage (avoiding %d used)...",
             category,
             len(used),
         )
-        search_cmd = [actual_ytdlp, query, "--get-id", "--get-title", "--no-playlist"]
+        search_cmd = cmd_base + [
+            "--flat-playlist",
+            "--print",
+            "%(id)s",
+            "--no-playlist",
+            query,
+        ]
         try:
             res = subprocess.run(
-                search_cmd, capture_output=True, text=True, check=True, timeout=30
+                search_cmd, capture_output=True, text=True, timeout=30, check=False
             )
-            lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    clean_id = line.strip()
+                    if len(clean_id) == 11 and " " not in clean_id and clean_id not in used:
+                        candidate_id = clean_id
+                        break
         except Exception as exc:
             logger.warning("[Gameplay] Search for %s failed: %s", category, exc)
-            return None
 
-        candidate_id: str | None = None
-        for line in lines:
-            if len(line) == 11 and " " not in line and line not in used:
-                candidate_id = line
-                break
+        # Fallback to verified candidate URLs if live search yielded no unused ID
+        if not candidate_id:
+            for item in VERIFIED_GAMEPLAY_SOURCES.get(category, []):
+                vid = item["id"]
+                if vid not in used:
+                    candidate_id = vid
+                    break
 
         if not candidate_id:
-            logger.warning("[Gameplay] No unused video found in search for %s", category)
+            logger.warning("[Gameplay] No unused candidate found for %s", category)
             return None
 
         target_path = cat_dir / f"{candidate_id}.mp4"
         logger.info(
             "[Gameplay] Downloading fresh %s gameplay video: %s...", category, candidate_id
         )
-        dl_cmd = [
-            actual_ytdlp,
+        dl_cmd = cmd_base + [
             f"https://www.youtube.com/watch?v={candidate_id}",
             "-f",
-            "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]/best",
             "--remux-video",
             "mp4",
             "-o",
@@ -258,11 +301,25 @@ class GameplayManager:
             "--no-playlist",
         ]
         try:
-            subprocess.run(dl_cmd, check=True, capture_output=True, timeout=600)
-            if target_path.exists() and target_path.stat().st_size > 0:
+            dl_res = subprocess.run(
+                dl_cmd, capture_output=True, text=True, timeout=600, check=False
+            )
+            if dl_res.returncode == 0 and target_path.exists() and target_path.stat().st_size > 0:
+                logger.info(
+                    "[Gameplay] Successfully downloaded fresh %s video: %s",
+                    category,
+                    target_path.name,
+                )
                 return target_path
+            else:
+                logger.warning(
+                    "[Gameplay] Download failed for %s: %s",
+                    candidate_id,
+                    dl_res.stderr[:200] if dl_res.stderr else "Unknown error",
+                )
         except Exception as exc:
-            logger.warning("[Gameplay] Download of %s failed: %s", candidate_id, exc)
+            logger.warning("[Gameplay] Download execution error for %s: %s", candidate_id, exc)
+
         return None
 
     def select_gameplay(
@@ -277,53 +334,47 @@ class GameplayManager:
         Selects a gameplay clip, cycling through categories (or using preferred),
         and calculates a randomized start offset so every Short looks fresh.
         Guarantees that the SAME gameplay video is NOT repeated in another video.
-        If no user video exists, creates/returns a procedural fallback loop.
+        If no user video exists, searches YouTube for fresh footage.
         """
         all_clips = self.list_clips_by_category()
 
-        # Determine target category
-        if preferred_category and preferred_category in all_clips and all_clips[preferred_category]:
+        # Determine target category (rotating 1: gta5, 2: minecraft, 3: subway_surfers...)
+        if preferred_category and preferred_category in self.categories:
             cat = preferred_category
-            candidates = all_clips[preferred_category]
         else:
             cat_idx = (clip_index - 1) % len(self.categories)
             cat = self.categories[cat_idx]
-            candidates = all_clips.get(cat, [])
 
-        # Fallback to any category with clips if target category is empty
-        if not candidates:
-            for other_cat, other_clips in all_clips.items():
-                if other_clips:
-                    cat = other_cat
-                    candidates = other_clips
-                    break
+        candidates = list(all_clips.get(cat, []))
+        used = self.get_used_identifiers(cat)
 
         # Filter out already used gameplay videos so they are NEVER repeated in another video
         if avoid_used and candidates:
-            used = self.get_used_identifiers(cat)
             unused_candidates = [
                 f for f in candidates if f.stem not in used and f.name not in used
             ]
             if unused_candidates:
                 candidates = unused_candidates
             else:
-                logger.info(
-                    "[Gameplay] All local %s clips were used in previous videos. "
-                    "Fetching fresh footage from YouTube...",
-                    cat,
-                )
-                fresh = self.fetch_new_gameplay_clip(cat, exclude_ids=used)
-                if fresh and fresh.exists() and fresh.stat().st_size > 0:
-                    candidates = [fresh]
-                else:
-                    logger.info(
-                        "[Gameplay] Could not fetch fresh clip; rotating from existing pool."
-                    )
+                candidates = []
 
-        # If still no clips exist, generate a procedural placeholder clip
+        # If no unused candidates exist locally, search YouTube for fresh footage
+        if not candidates:
+            logger.info(
+                "[Gameplay] No unused %s clips found locally. Searching YouTube for fresh footage...",
+                cat,
+            )
+            fresh = self.fetch_new_gameplay_clip(cat, exclude_ids=used)
+            if fresh and fresh.exists() and fresh.stat().st_size > 0:
+                candidates = [fresh]
+            elif all_clips.get(cat):
+                # If online search couldn't get a new file, rotate existing local files
+                candidates = list(all_clips[cat])
+
+        # If still no clips exist across any source, generate emergency dark placeholder
         if not candidates:
             placeholder = self.base_dir / cat / f"procedural_{cat}.mp4"
-            if not placeholder.exists():
+            if not placeholder.exists() or placeholder.stat().st_size == 0:
                 self.generate_placeholder_clip(placeholder, category=cat, duration=15.0)
             candidates = [placeholder]
 
@@ -334,10 +385,10 @@ class GameplayManager:
 
         total_dur = self.probe_clip_duration(selected_path)
 
-        # Start from the middle of the gameplay video (GTA V, Minecraft, Subway Surfers)
+        # Start from the middle or dynamic offset so scenes never look the same
         if total_dur > duration_needed + 5.0:
             mid = total_dur / 2.0
-            half_window = min(30.0, total_dur * 0.05)
+            half_window = min(45.0, total_dur * 0.15)
             min_start = max(0.0, mid - half_window)
             max_start = min(total_dur - duration_needed - 1.0, mid + half_window)
             if max_start > min_start:
@@ -353,6 +404,19 @@ class GameplayManager:
             start_seconds=round(start_offset, 2),
             duration_seconds=duration_needed,
         )
+
+    def ensure_all_categories_ready(self) -> dict[str, list[Path]]:
+        """Ensures that every category (gta5, minecraft, subway_surfers) has real gameplay footage."""
+        ready: dict[str, list[Path]] = {}
+        for cat in self.categories:
+            clips = self.list_clips_by_category().get(cat, [])
+            if not clips:
+                logger.info("[Gameplay] Pre-fetching gameplay video for %s...", cat)
+                fresh = self.fetch_new_gameplay_clip(cat)
+                if fresh:
+                    clips = [fresh]
+            ready[cat] = clips
+        return ready
 
     def ensure_default_gameplay_clips(self, ytdlp_path: str = "yt-dlp") -> dict[str, Path]:
         """
@@ -375,36 +439,9 @@ class GameplayManager:
             if existing:
                 continue
 
-            info = DEFAULT_GAMEPLAY_SOURCES.get(cat)
-            if not info:
-                continue
-
-            url = info["url"]
-            out_name = info["filename"]
-            target_path = cat_dir / out_name
-            actual_ytdlp = shutil.which(ytdlp_path) or (
-                str(Path(sys.executable).parent / "yt-dlp.exe")
-                if sys.platform == "win32"
-                else None
-            )
-            if actual_ytdlp and not target_path.exists():
-                logger.info("Auto-downloading default gameplay for %s from %s...", cat, url)
-                cmd = [
-                    actual_ytdlp,
-                    url,
-                    "-f",
-                    "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-                    "--remux-video",
-                    "mp4",
-                    "-o",
-                    str(target_path),
-                    "--no-playlist",
-                ]
-                try:
-                    subprocess.run(cmd, check=True, capture_output=True, timeout=600)
-                    downloaded[cat] = target_path
-                except Exception as exc:
-                    logger.warning("Failed to auto-download gameplay for %s: %s", cat, exc)
+            fresh = self.fetch_new_gameplay_clip(cat)
+            if fresh:
+                downloaded[cat] = fresh
 
         return downloaded
 
@@ -415,8 +452,8 @@ class GameplayManager:
         duration: float = 60.0,
     ) -> Path:
         """
-        Generates a 1080x960 30fps animated test clip using FFmpeg filtergraphs.
-        Used as an instant fallback when no user-provided gameplay videos exist yet.
+        Emergency fallback: Generates a sleek 1080x960 30fps dark canvas with category badge.
+        Only used if completely offline and no gameplay clips could be found.
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if shutil.which(self.ffmpeg) is None:
@@ -424,15 +461,15 @@ class GameplayManager:
             return output_path
 
         colors = {
-            "gta5": ("0x1A1A2E", "0xE94560", "GTA 5 GAMEPLAY"),
-            "minecraft": ("0x1B4332", "0x52B788", "MINECRAFT PARKOUR"),
-            "subway_surfers": ("0x3D0066", "0xFF9900", "SUBWAY SURFERS"),
+            "gta5": ("0x0f172a", "0x38bdf8", "GTA 5 STUNTS"),
+            "minecraft": ("0x052e16", "0x22c55e", "MINECRAFT PARKOUR"),
+            "subway_surfers": ("0x1c1917", "0xf59e0b", "SUBWAY SURFERS"),
         }
         bg_col, accent_col, label = colors.get(
-            category, ("0x111111", "0x00FF66", "GAMEPLAY BACKGROUND")
+            category, ("0x0b0f19", "0x38bdf8", "GAMEPLAY FOOTAGE")
         )
 
-        filter_graph = f"testsrc2=size=1080x960:rate=30:duration={duration:.1f}"
+        filter_graph = f"color=c={bg_col}:s=1080x960:r=30:d={duration:.1f}"
 
         cmd = [
             self.ffmpeg,

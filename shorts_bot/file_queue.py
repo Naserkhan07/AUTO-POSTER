@@ -311,6 +311,14 @@ async def run_file_queue(
                 next_pending_retry = time.monotonic() + settings.credential_check_minutes * 60
 
             if not watch:
+                print(
+                    "\n=================================================================================\n"
+                    "🚀 AUTO-POSTER MISSION CONTROL DASHBOARD\n"
+                    "👉 Localhost Web Dashboard: http://localhost:5050 (Run: python dashboard.py)\n"
+                    "👉 GitHub Actions Summary: View the 'Summary' tab in your workflow run\n"
+                    "=================================================================================\n",
+                    flush=True,
+                )
                 return 1 if any_failures else 0
             await asyncio.sleep(settings.links_poll_seconds)
     finally:

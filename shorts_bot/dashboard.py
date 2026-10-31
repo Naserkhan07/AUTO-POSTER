@@ -207,7 +207,8 @@ def render_markdown_dashboard(data: dict[str, Any]) -> str:
 
     md: list[str] = []
     md.append("# 🚀 AUTO-POSTER Live Mission Control")
-    md.append(f"**Live Server Time (12-Hour Clock):** `{data['date_12h']}` | **Status:** ✅ `Running 24/7`\n")
+    md.append(f"**Live Server Time (12-Hour Clock):** `{data['date_12h']}` | **Status:** ✅ `Running 24/7`")
+    md.append("> 🌐 **Live Web URL & Port:** [Open GitHub Actions Workflow Runs](https://github.com/Naserkhan07/AUTO-POSTER/actions) • **Localhost Dashboard:** `http://localhost:5050`\n")
 
     # Big ASCII Progress Bar in GitHub Summary
     bar_fill = min(20, max(0, pct // 5))

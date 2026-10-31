@@ -48,6 +48,18 @@ jobs:
             echo "YouTube cookies successfully loaded."
           fi
 
+      - name: Cache Gameplay Footage Assets
+        uses: actions/cache@v4
+        with:
+          path: assets/gameplay
+          key: gameplay-footage-${{ runner.os }}-v1
+          restore-keys: |
+            gameplay-footage-${{ runner.os }}-
+
+      - name: Ensure Real Gameplay Footage (GTA V, Minecraft, Subway Surfers)
+        run: |
+          python -c "from shorts_bot.gameplay import GameplayManager; GameplayManager().ensure_all_categories_ready()"
+
       - name: Run Auto-Poster Pipeline
         env:
           RIGHTS_ACKNOWLEDGED: "true"
@@ -66,6 +78,13 @@ jobs:
         run: |
           python dashboard.py --summary >> $GITHUB_STEP_SUMMARY
           python dashboard.py --html public/index.html
+          echo ""
+          echo "================================================================================="
+          echo "🚀 AUTO-POSTER MISSION CONTROL DASHBOARD IS LIVE!"
+          echo "👉 Click this link to open the Summary tab on GitHub:"
+          echo "   https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "👉 Localhost Port (if you run locally on PC): http://localhost:5050"
+          echo "================================================================================="
 
       - name: Upload Live Dashboard Artifact
         if: always()
