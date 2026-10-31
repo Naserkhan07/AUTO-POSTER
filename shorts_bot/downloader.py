@@ -119,7 +119,7 @@ class VideoDownloader:
         if pot_active:
             options["extractor_args"] = {
                 "youtubepot-bgutilhttp": {"base_url": "http://127.0.0.1:4416"},
-                "youtube": {"player_client": ["mweb", "tv", "web_safari"]},
+                "youtube": {"player_client": ["android", "tv"]},
             }
 
         if cookie_file:
@@ -287,10 +287,16 @@ class VideoDownloader:
                 clean_options.pop("cookiefile", None)
                 clean_options.pop("cookiesfrombrowser", None)
                 clean_options["format"] = "bestvideo+bestaudio/best"
-                clean_options["extractor_args"] = {
-                    "youtubepot-bgutilhttp": {"base_url": "http://127.0.0.1:4416"},
-                    "youtube": {"player_client": ["tv", "mweb", "web_safari", "android"]},
+                clean_extractor_args: dict[str, Any] = {
+                    "youtube": {"player_client": ["android", "tv"]},
                 }
+                import socket
+                try:
+                    with socket.create_connection(("127.0.0.1", 4416), timeout=0.2):
+                        clean_extractor_args["youtubepot-bgutilhttp"] = {"base_url": "http://127.0.0.1:4416"}
+                except OSError:
+                    pass
+                clean_options["extractor_args"] = clean_extractor_args
                 try:
                     info = self._extract_info(url, clean_options)
                 except Exception:
@@ -303,6 +309,8 @@ class VideoDownloader:
                         ) from exc
             elif "live event will begin" in detail.casefold() or "premieres in" in detail.casefold():
                 raise DownloadError(f"Scheduled livestream/premiere cannot be downloaded: {detail}")
+            elif "video is unavailable" in detail.casefold() or "this video is unavailable" in detail.casefold() or "private video" in detail.casefold():
+                raise DownloadError(f"Video is unavailable or private on YouTube: {detail}")
             elif "requested format is not available" in detail.casefold() and authenticated:
                 # Account cookies can occasionally be assigned a YouTube client experiment that
                 # exposes only SABR/image formats. Retry the exact same bestvideo+bestaudio

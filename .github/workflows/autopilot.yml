@@ -16,6 +16,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Cloudflare WARP (Bypass Cloud Datacenter IP Restrictions)
+        uses: fscarmen/warp-on-actions@v1.4
+        with:
+          stack: dual
+          mode: wireguard
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -54,7 +60,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade yt-dlp yt-dlp-ejs yt-dlp-getpot-wpc bgutil-ytdlp-pot-provider pytubefix
+          pip install --upgrade yt-dlp yt-dlp-ejs bgutil-ytdlp-pot-provider pytubefix
           pip install -e .
 
       - name: Setup YouTube Token

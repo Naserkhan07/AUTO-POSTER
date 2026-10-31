@@ -298,23 +298,26 @@ async def run_file_queue(
                 result = await pipeline.process(job.id)
                 if result.error:
                     failed_urls_this_session.add(url)
-                    if "live event will begin" in result.error.lower() or "premieres in" in result.error.lower() or "scheduled livestream" in result.error.lower():
-                        # A scheduled livestream cannot be downloaded yet. Remove from links.txt to unblock the pipeline.
+                    if "live event will begin" in result.error.lower() or "premieres in" in result.error.lower() or "scheduled livestream" in result.error.lower() or "video is unavailable" in result.error.lower():
+                        # A scheduled livestream or unavailable video cannot be downloaded. Remove from links.txt to unblock the pipeline.
                         try:
                             lines = settings.links_file.read_text(encoding="utf-8").splitlines()
                             new_lines = [l for l in lines if l.strip() != url]
                             settings.links_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-                            print(f"[{job.id}] Removed scheduled livestream from {settings.links_file.name}", flush=True)
+                            print(f"[{job.id}] Removed unavailable / scheduled URL from {settings.links_file.name}", flush=True)
                         except Exception:
                             pass
                     else:
                         any_failures = True
-                        if not watch and ("bot" in result.error.lower() or "signed-in cookies" in result.error.lower()):
-                            print(
-                                f"[{job.id}] Halting remaining queue in this run to protect IP reputation from botguard penalty.",
-                                flush=True,
-                            )
-                            break
+                        # Move the failing URL to the end of links.txt so other channels can be processed
+                        try:
+                            lines = settings.links_file.read_text(encoding="utf-8").splitlines()
+                            new_lines = [l for l in lines if l.strip() != url]
+                            if any(l.strip() == url for l in lines):
+                                new_lines.append(url)
+                            settings.links_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+                        except Exception:
+                            pass
                     if watch:
                         print(
                             f"[{job.id}] URL will not retry again in this session. "
@@ -338,7 +341,8 @@ async def run_file_queue(
                     "=================================================================================\n",
                     flush=True,
                 )
-                return 1 if any_failures else 0
+                success = any(j.status.value == "completed" for j in repository.list_recent(limit=5))
+                return 0 if (not any_failures or success) else 1
             await asyncio.sleep(settings.links_poll_seconds)
     finally:
         if autopilot_task:
