@@ -39,20 +39,35 @@ jobs:
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
-          if [ -n "$YOUTUBE_TOKEN_JSON" ]; then
-            printf '%s\n' "$YOUTUBE_TOKEN_JSON" > youtube_token.json
-            echo "UPLOAD_YOUTUBE=true" >> $GITHUB_ENV
-          fi
+          python -c '
+          import os
+          token = os.environ.get("YOUTUBE_TOKEN_JSON", "").strip()
+          if token:
+              with open("youtube_token.json", "w", encoding="utf-8") as f:
+                  f.write(token + "\n")
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_f:
+                  env_f.write("UPLOAD_YOUTUBE=true\n")
+              print("YouTube OAuth token successfully configured.")
+          '
 
       - name: Setup YouTube Cookies
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
-          if [ -n "$YOUTUBE_COOKIES" ]; then
-            printf '%s\n' "$YOUTUBE_COOKIES" > cookies.txt
-            echo "YTDLP_COOKIE_FILE=cookies.txt" >> $GITHUB_ENV
-            echo "YouTube cookies successfully loaded."
-          fi
+          python -c '
+          import os
+          cookies = os.environ.get("YOUTUBE_COOKIES", "").strip()
+          if cookies:
+              if not cookies.startswith("# Netscape"):
+                  cookies = "# Netscape HTTP Cookie File\n" + cookies
+              with open("cookies.txt", "w", encoding="utf-8") as f:
+                  f.write(cookies + "\n")
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_f:
+                  env_f.write("YTDLP_COOKIE_FILE=cookies.txt\n")
+              print(f"YouTube cookies successfully configured ({len(cookies.splitlines())} lines).")
+          else:
+              print("Notice: YOUTUBE_COOKIES secret not found or empty.")
+          '
 
       - name: Cache Gameplay Footage Assets
         uses: actions/cache@v4

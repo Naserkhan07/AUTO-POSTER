@@ -415,13 +415,16 @@ class Settings:
             raise ConfigurationError(f"YTDLP_COOKIE_FILE was not found: {self.ytdlp_cookie_file}")
         if self.ytdlp_cookie_file:
             try:
-                with self.ytdlp_cookie_file.open(encoding="utf-8") as cookie_file:
-                    first_line = cookie_file.readline().strip()
+                content = self.ytdlp_cookie_file.read_text(encoding="utf-8", errors="ignore")
+                non_empty = [line.strip() for line in content.splitlines() if line.strip()]
             except OSError as exc:
                 raise ConfigurationError(
                     f"Could not read YTDLP_COOKIE_FILE: {self.ytdlp_cookie_file}"
                 ) from exc
-            if not first_line.startswith(("# Netscape HTTP Cookie File", "# HTTP Cookie File")):
+            is_netscape = any("netscape" in line.lower() for line in non_empty[:5]) or any(
+                "\t" in raw_line for raw_line in content.splitlines()[:20]
+            )
+            if not is_netscape:
                 raise ConfigurationError(
                     "YTDLP_COOKIE_FILE must be a Netscape-format cookie export."
                 )
