@@ -172,6 +172,7 @@ class VideoDownloader:
             if "sign in to confirm" in detail.casefold() or "bot" in detail.casefold():
                 # Cloud datacenter IPs are blocked by default web client. Retry with android/ios/tv mobile clients.
                 mobile_options = dict(options)
+                mobile_options["format"] = "bestvideo+bestaudio/best"
                 mobile_options["extractor_args"] = {
                     "youtube": {"player_client": ["android", "ios", "tv"]}
                 }
