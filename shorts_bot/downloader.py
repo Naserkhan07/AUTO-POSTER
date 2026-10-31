@@ -107,6 +107,21 @@ class VideoDownloader:
                 "extractor": cls._retry_delay,
             },
         }
+        # If the BGUtil PO Token Provider is active on localhost:4416, register it with yt-dlp
+        import socket
+        pot_active = False
+        try:
+            with socket.create_connection(("127.0.0.1", 4416), timeout=0.2):
+                pot_active = True
+        except OSError:
+            pot_active = False
+
+        if pot_active:
+            options["extractor_args"] = {
+                "youtubepot-bgutilhttp": {"base_url": "http://127.0.0.1:4416"},
+                "youtube": {"player_client": ["mweb", "tv", "web_safari"]},
+            }
+
         if cookie_file:
             # A Netscape-format export avoids Windows Chromium DPAPI/app-bound encryption.
             # Never combine it with browser extraction, which would still trigger decryption.
@@ -273,7 +288,8 @@ class VideoDownloader:
                 clean_options.pop("cookiesfrombrowser", None)
                 clean_options["format"] = "bestvideo+bestaudio/best"
                 clean_options["extractor_args"] = {
-                    "youtube": {"player_client": ["tv", "android", "mweb", "web"]}
+                    "youtubepot-bgutilhttp": {"base_url": "http://127.0.0.1:4416"},
+                    "youtube": {"player_client": ["tv", "mweb", "web_safari", "android"]},
                 }
                 try:
                     info = self._extract_info(url, clean_options)

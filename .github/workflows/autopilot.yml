@@ -27,6 +27,11 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install FFmpeg
         run: |
           sudo apt-get update
@@ -37,8 +42,14 @@ jobs:
           docker run --name bgutil-provider -d --init \
             -p 127.0.0.1:4416:4416 \
             brainicism/bgutil-ytdlp-pot-provider:latest
-          sleep 5
-          curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4416/ping || echo "POT Provider container started."
+          echo "Waiting for BGUtil POT Provider to become ready on http://127.0.0.1:4416/ping ..."
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:4416/ping | grep -q "version"; then
+              echo "✅ BGUtil POT Provider is active and ready!"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Install dependencies
         run: |
@@ -81,6 +92,10 @@ jobs:
                   cookies = "# Netscape HTTP Cookie File\n" + cookies
               with open("cookies.txt", "w", encoding="utf-8") as f:
                   f.write(cookies + "\n")
+              config_dir = os.path.expanduser("~/.config/yt-dlp")
+              os.makedirs(config_dir, exist_ok=True)
+              with open(os.path.join(config_dir, "config"), "w", encoding="utf-8") as conf:
+                  conf.write("--cookies cookies.txt\n")
               with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_f:
                   env_f.write("YTDLP_COOKIE_FILE=cookies.txt\n")
               print(f"YouTube cookies successfully configured ({len(cookies.splitlines())} lines).")

@@ -309,6 +309,12 @@ async def run_file_queue(
                             pass
                     else:
                         any_failures = True
+                        if not watch and ("bot" in result.error.lower() or "signed-in cookies" in result.error.lower()):
+                            print(
+                                f"[{job.id}] Halting remaining queue in this run to protect IP reputation from botguard penalty.",
+                                flush=True,
+                            )
+                            break
                     if watch:
                         print(
                             f"[{job.id}] URL will not retry again in this session. "
