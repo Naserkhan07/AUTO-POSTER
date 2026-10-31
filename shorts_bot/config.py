@@ -159,6 +159,11 @@ class Settings:
     caption_font: str
     caption_font_size: int
     caption_highlight_colors: tuple[str, ...]
+    scheduler_enabled: bool = True
+    scheduler_advance_prep_minutes: int = 30
+    scheduler_max_daily_youtube: int = 10
+    scheduler_max_daily_instagram: int = 10
+    scheduler_max_daily_facebook: int = 10
 
     @classmethod
     def from_env(
@@ -174,6 +179,9 @@ class Settings:
         database_path = Path(os.getenv("DATABASE_PATH", str(work_dir / "jobs.db"))).expanduser()
         channel_config_file = Path(os.getenv("CHANNEL_CONFIG_FILE", "channels.toml")).expanduser()
         channel_config = _read_channel_config(channel_config_file)
+        scheduler_section = channel_config.get("scheduler", {})
+        if not isinstance(scheduler_section, dict):
+            scheduler_section = {}
         autopilot_section = channel_config.get("autopilot", {})
         if not isinstance(autopilot_section, dict):
             autopilot_section = {}
@@ -328,6 +336,26 @@ class Settings:
                     "CAPTION_HIGHLIGHT_COLORS", "&H0066FF00&,&H0000E6FF&,&H00FFFF00&"
                 ).split(",")
                 if c.strip()
+            ),
+            scheduler_enabled=_bool_env(
+                "SCHEDULER_ENABLED",
+                bool(scheduler_section.get("enabled", True)),
+            ),
+            scheduler_advance_prep_minutes=int(
+                os.getenv("SCHEDULER_ADVANCE_PREP_MINUTES")
+                or scheduler_section.get("advance_prep_minutes", 30)
+            ),
+            scheduler_max_daily_youtube=int(
+                os.getenv("SCHEDULER_MAX_DAILY_YOUTUBE")
+                or scheduler_section.get("max_daily_youtube", 10)
+            ),
+            scheduler_max_daily_instagram=int(
+                os.getenv("SCHEDULER_MAX_DAILY_INSTAGRAM")
+                or scheduler_section.get("max_daily_instagram", 10)
+            ),
+            scheduler_max_daily_facebook=int(
+                os.getenv("SCHEDULER_MAX_DAILY_FACEBOOK")
+                or scheduler_section.get("max_daily_facebook", 10)
             ),
         )
         settings.validate_common()

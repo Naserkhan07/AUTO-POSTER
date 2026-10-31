@@ -5,6 +5,9 @@ on:
     # Run every 15 minutes automatically
     - cron: '*/15 * * * *'
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   run-pipeline:
@@ -81,6 +84,18 @@ jobs:
         run: |
           python -c "from shorts_bot.gameplay import GameplayManager; GameplayManager().ensure_all_categories_ready()"
 
+      - name: Restore Pipeline Database & State Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            work/jobs.db
+            work/jobs.db-wal
+            work/jobs.db-shm
+            work/jobs
+          key: pipeline-db-state-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            pipeline-db-state-${{ runner.os }}-
+
       - name: Run Auto-Poster Pipeline
         env:
           RIGHTS_ACKNOWLEDGED: "true"
@@ -93,6 +108,17 @@ jobs:
           UPLOAD_INSTAGRAM: "true"
         run: |
           python main.py --once
+
+      - name: Save Pipeline Database & State Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            work/jobs.db
+            work/jobs.db-wal
+            work/jobs.db-shm
+            work/jobs
+          key: pipeline-db-state-${{ runner.os }}-${{ github.run_id }}
 
       - name: Publish Live Mission Control Dashboard to GitHub Summary
         if: always()

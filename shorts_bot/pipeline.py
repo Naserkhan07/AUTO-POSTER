@@ -24,6 +24,7 @@ from .gameplay import GameplayManager
 from .instagram import InstagramUploader
 from .media import MediaProcessor
 from .models import Job, JobClip, JobStatus, ShortPlan, SourceVideo
+from .scheduler import ContentScheduler
 from .youtube import YouTubeUploader
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class WorkflowServices:
     instagram_uploader: InstagramUploader | None
     facebook_uploader: FacebookReelUploader | None = None
     gameplay: GameplayManager | None = None
+    scheduler: ContentScheduler | None = None
     unavailable_platforms: dict[str, str] = field(default_factory=dict)
     # monotonic time until which a platform is skipped after an upload-limit
     # error, so Meta spam-protection blocks are allowed to lift instead of
@@ -175,6 +177,17 @@ class WorkflowServices:
                 if settings.enable_gameplay
                 else None
             ),
+            scheduler=(
+                ContentScheduler(
+                    daily_limits={
+                        "YouTube": settings.scheduler_max_daily_youtube,
+                        "Instagram": settings.scheduler_max_daily_instagram,
+                        "Facebook": settings.scheduler_max_daily_facebook,
+                    }
+                )
+                if settings.scheduler_enabled
+                else None
+            ),
         )
 
 
@@ -280,6 +293,7 @@ class WorkflowPipeline:
             }
             total_clips = len(clips)
             metadata_requests = 0
+            uploaded_platforms_this_run: set[str] = set()
             for clip in clips:
                 try:
                     if not clip.metadata_ready:
@@ -317,6 +331,7 @@ class WorkflowPipeline:
                         job_dir,
                         blocked_platforms,
                         full_transcript=full_transcript,
+                        uploaded_platforms_this_run=uploaded_platforms_this_run,
                     )
                 except Exception as exc:
                     self.repository.update_clip(
@@ -513,6 +528,7 @@ class WorkflowPipeline:
         job_dir: Path,
         blocked_platforms: dict[str, str],
         full_transcript: str | None = None,
+        uploaded_platforms_this_run: set[str] | None = None,
     ) -> JobClip:
         if self._clip_published_everywhere(clip):
             # Every enabled platform already has this clip; never re-render or re-upload it.
@@ -674,11 +690,22 @@ class WorkflowPipeline:
                 thumbnail_path=str(thumbnail_path),
             )
 
-        if (
+        # YouTube Upload gating
+        can_upload_youtube = bool(
             self.services.youtube_uploader
             and not clip.youtube_video_id
             and "YouTube" not in blocked_platforms
-        ):
+        )
+        if can_upload_youtube and self.services.scheduler:
+            if uploaded_platforms_this_run is not None and "YouTube" in uploaded_platforms_this_run:
+                can_upload_youtube = False
+            else:
+                should_up, reason = self.services.scheduler.should_upload_now(self.repository, "YouTube")
+                if not should_up:
+                    can_upload_youtube = False
+                    logger.info("YouTube upload deferred: %s", reason)
+
+        if can_upload_youtube:
             await self._status(
                 job.id,
                 JobStatus.UPLOADING,
@@ -697,6 +724,12 @@ class WorkflowPipeline:
                     youtube_video_id=youtube_video_id,
                     error=None,
                 )
+                if hasattr(self.repository, "record_platform_upload"):
+                    self.repository.record_platform_upload(
+                        "YouTube", job.id, clip.clip_index, youtube_video_id
+                    )
+                if uploaded_platforms_this_run is not None:
+                    uploaded_platforms_this_run.add("YouTube")
                 if clip.clip_index == 1:
                     self.repository.update(job.id, youtube_video_id=youtube_video_id)
                 await self._status(
@@ -721,11 +754,22 @@ class WorkflowPipeline:
                     f"pending, and the bot will continue with the next clip: {exc}",
                 )
 
-        if (
+        # Instagram Upload gating
+        can_upload_instagram = bool(
             self.services.instagram_uploader
             and not clip.instagram_media_id
             and "Instagram" not in blocked_platforms
-        ):
+        )
+        if can_upload_instagram and self.services.scheduler:
+            if uploaded_platforms_this_run is not None and "Instagram" in uploaded_platforms_this_run:
+                can_upload_instagram = False
+            else:
+                should_up, reason = self.services.scheduler.should_upload_now(self.repository, "Instagram")
+                if not should_up:
+                    can_upload_instagram = False
+                    logger.info("Instagram upload deferred: %s", reason)
+
+        if can_upload_instagram:
             sequence_index = self.repository.clip_sequence_index(job.id, clip.clip_index)
             instagram_plan = self._instagram_plan(plan, sequence_index)
             if instagram_plan.instagram_caption != clip.instagram_caption:
@@ -755,6 +799,12 @@ class WorkflowPipeline:
                     instagram_url=instagram.permalink,
                     error=None,
                 )
+                if hasattr(self.repository, "record_platform_upload"):
+                    self.repository.record_platform_upload(
+                        "Instagram", job.id, clip.clip_index, instagram.media_id
+                    )
+                if uploaded_platforms_this_run is not None:
+                    uploaded_platforms_this_run.add("Instagram")
                 if clip.clip_index == 1:
                     self.repository.update(
                         job.id,
@@ -783,11 +833,22 @@ class WorkflowPipeline:
                     f"pending, and the bot will continue with the next Reel: {exc}",
                 )
 
-        if (
+        # Facebook Upload gating
+        can_upload_facebook = bool(
             self.services.facebook_uploader
             and not clip.facebook_video_id
             and "Facebook" not in blocked_platforms
-        ):
+        )
+        if can_upload_facebook and self.services.scheduler:
+            if uploaded_platforms_this_run is not None and "Facebook" in uploaded_platforms_this_run:
+                can_upload_facebook = False
+            else:
+                should_up, reason = self.services.scheduler.should_upload_now(self.repository, "Facebook")
+                if not should_up:
+                    can_upload_facebook = False
+                    logger.info("Facebook upload deferred: %s", reason)
+
+        if can_upload_facebook:
             await self._status(
                 job.id,
                 JobStatus.UPLOADING,
@@ -804,6 +865,12 @@ class WorkflowPipeline:
                     facebook_url=facebook_url,
                     error=None,
                 )
+                if hasattr(self.repository, "record_platform_upload"):
+                    self.repository.record_platform_upload(
+                        "Facebook", job.id, clip.clip_index, facebook_video_id
+                    )
+                if uploaded_platforms_this_run is not None:
+                    uploaded_platforms_this_run.add("Facebook")
                 if clip.clip_index == 1:
                     self.repository.update(
                         job.id,

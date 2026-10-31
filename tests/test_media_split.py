@@ -15,10 +15,14 @@ class MediaSplitTestCase(unittest.TestCase):
             tmp_path = Path(tmpdir)
             processor = MediaProcessor(video_preset="ultrafast", video_layout="split_gameplay")
 
-            # 1. Create a dummy primary source video using gameplay generator
+            # 1. Create dummy source videos using gameplay generator
             mgr = GameplayManager(base_dir=tmp_path / "gameplay")
             primary_src = tmp_path / "primary.mp4"
             mgr.generate_placeholder_clip(primary_src, category="gta5", duration=3.0)
+
+            gp_clip = tmp_path / "gameplay" / "gta5" / "local_gta.mp4"
+            gp_clip.parent.mkdir(parents=True, exist_ok=True)
+            mgr.generate_placeholder_clip(gp_clip, category="gta5", duration=3.0)
 
             # 2. Get a gameplay clip
             selection = mgr.select_gameplay(clip_index=1, duration_needed=2.0)

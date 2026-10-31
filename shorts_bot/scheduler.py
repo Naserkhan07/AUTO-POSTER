@@ -246,6 +246,8 @@ class ContentScheduler:
         self, repository: JobRepository, platform: str, date_str: str | None = None
     ) -> int:
         """Returns how many videos were published to this platform today."""
+        if hasattr(repository, "get_platform_upload_count"):
+            return repository.get_platform_upload_count(platform, date_str)
         target_date = date_str or datetime.now(UTC).strftime("%Y-%m-%d")
         col_map = {
             "YouTube": "youtube_video_id",
@@ -277,3 +279,58 @@ class ContentScheduler:
         limit = self.daily_limits.get(platform, 10)
         count = self.get_daily_upload_count(repository, platform, date_str)
         return count < limit
+
+    def should_upload_now(
+        self,
+        repository: JobRepository,
+        platform: str,
+        current_time: datetime | None = None,
+    ) -> tuple[bool, str]:
+        """
+        Determines whether a video can be uploaded right now based on:
+        1. Strict daily limit (min/max 10 uploads per day per platform).
+        2. Equal time distribution across scheduled slots (Morning, Afternoon, Evening peak windows).
+        3. Minimum interval spacing so clips are never blasted all at once.
+        """
+        now = current_time or datetime.now()
+        limit = self.daily_limits.get(platform, 10)
+        target_date = now.strftime("%Y-%m-%d")
+        count_today = self.get_daily_upload_count(repository, platform, target_date)
+
+        # 1. Check daily safety cap
+        if count_today >= limit:
+            return (
+                False,
+                f"Daily target of {limit} uploads reached today ({count_today}/{limit}). Resumes tomorrow morning.",
+            )
+
+        # 2. Check minimum spacing from last upload on this platform (minimum 35 minutes)
+        if hasattr(repository, "get_last_platform_upload_time"):
+            last_upload_time = repository.get_last_platform_upload_time(platform)
+            if last_upload_time:
+                elapsed_min = (now - last_upload_time).total_seconds() / 60.0
+                if elapsed_min < 35:
+                    return (
+                        False,
+                        f"Spacing interval active ({int(elapsed_min)}m since last upload; 35m minimum spacing required).",
+                    )
+
+        # 3. Check time-of-day slots for today
+        slots_today = self.get_slots_for_day(platform, now)
+        past_or_current_slots = [
+            s for s in slots_today if s.target_time <= now + timedelta(minutes=25)
+        ]
+        allowed_count = min(limit, len(past_or_current_slots))
+
+        if count_today >= allowed_count:
+            next_slot = self.get_next_slot(platform, now)
+            next_12h = next_slot.target_time.strftime("%I:%M %p")
+            return (
+                False,
+                f"Waiting for next scheduled window: {next_12h} ({count_today}/{limit} uploaded today).",
+            )
+
+        return (
+            True,
+            f"Scheduled slot active. Uploading video #{count_today + 1} of {limit} for today.",
+        )

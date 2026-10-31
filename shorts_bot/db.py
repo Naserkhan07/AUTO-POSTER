@@ -72,6 +72,15 @@ CREATE TABLE IF NOT EXISTS used_gameplay (
     used_at TEXT NOT NULL,
     PRIMARY KEY (category, video_identifier)
 );
+
+CREATE TABLE IF NOT EXISTS platform_uploads (
+    platform TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    clip_index INTEGER NOT NULL,
+    media_id TEXT NOT NULL,
+    uploaded_at TEXT NOT NULL,
+    PRIMARY KEY (platform, job_id, clip_index)
+);
 """
 
 _MIGRATION_COLUMNS = {
@@ -543,6 +552,82 @@ class JobRepository:
                     "SELECT video_identifier FROM used_gameplay"
                 ).fetchall()
             return {row["video_identifier"] for row in rows}
+
+    def record_platform_upload(
+        self,
+        platform: str,
+        job_id: str,
+        clip_index: int,
+        media_id: str,
+        uploaded_at: str | None = None,
+    ) -> None:
+        now = uploaded_at or self._now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO platform_uploads (platform, job_id, clip_index, media_id, uploaded_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (platform, job_id, clip_index, media_id, now),
+            )
+
+    def get_platform_upload_count(
+        self, platform: str, date_prefix: str | None = None
+    ) -> int:
+        from datetime import UTC, datetime
+        target_date = date_prefix or datetime.now(UTC).strftime("%Y-%m-%d")
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) as cnt FROM platform_uploads
+                WHERE platform = ? AND uploaded_at LIKE ?
+                """,
+                (platform, f"{target_date}%"),
+            ).fetchone()
+            if row and int(row["cnt"]) > 0:
+                return int(row["cnt"])
+
+            col_map = {
+                "YouTube": "youtube_video_id",
+                "Instagram": "instagram_media_id",
+                "Facebook": "facebook_video_id",
+            }
+            col = col_map.get(platform)
+            if col:
+                fallback_row = connection.execute(
+                    f"""
+                    SELECT COUNT(*) as cnt FROM job_clips c
+                    JOIN jobs j ON j.id = c.job_id
+                    WHERE c.{col} IS NOT NULL AND c.{col} != ''
+                    AND (j.created_at LIKE ? OR j.updated_at LIKE ?)
+                    """,
+                    (f"{target_date}%", f"{target_date}%"),
+                ).fetchone()
+                if fallback_row:
+                    return int(fallback_row["cnt"])
+        return 0
+
+    def get_last_platform_upload_time(self, platform: str) -> datetime | None:
+        from datetime import datetime
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT uploaded_at FROM platform_uploads
+                WHERE platform = ?
+                ORDER BY uploaded_at DESC
+                LIMIT 1
+                """,
+                (platform,),
+            ).fetchone()
+            if row and row["uploaded_at"]:
+                try:
+                    raw = str(row["uploaded_at"])
+                    if raw.endswith("Z"):
+                        raw = raw[:-1] + "+00:00"
+                    return datetime.fromisoformat(raw).astimezone().replace(tzinfo=None)
+                except Exception:
+                    pass
+        return None
 
     def fail_interrupted(self) -> int:
         running = (

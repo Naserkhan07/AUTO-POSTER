@@ -34,6 +34,7 @@ class GameplayManagerTestCase(unittest.TestCase):
             mgr = GameplayManager(base_dir=tmpdir)
             p = Path(tmpdir)
             (p / "gta5" / "gta.mp4").touch()
+            (p / "gta5" / "gta2.mp4").touch()
             (p / "minecraft" / "mc.mp4").touch()
             (p / "subway_surfers" / "ss.mp4").touch()
 
