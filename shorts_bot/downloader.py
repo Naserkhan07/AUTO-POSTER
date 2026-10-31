@@ -169,7 +169,7 @@ class VideoDownloader:
         except yt_dlp.utils.DownloadError as exc:
             detail = str(exc)
             authenticated = "cookiefile" in options or "cookiesfrombrowser" in options
-            if ("sign in to confirm" in detail.casefold() or "bot" in detail.casefold()) and not authenticated:
+            if "sign in to confirm" in detail.casefold() or "bot" in detail.casefold():
                 # Cloud datacenter IPs are blocked by default web client. Retry with TV and mobile client.
                 tv_options = dict(options)
                 tv_options["extractor_args"] = {
@@ -178,9 +178,21 @@ class VideoDownloader:
                 try:
                     info = self._extract_info(url, tv_options)
                 except Exception:
-                    raise DownloadError(
-                        f"YouTube download failed: {self._download_error_detail(detail)}"
-                    ) from exc
+                    # Also try tv client without cookies if cookies were rejected
+                    if authenticated:
+                        tv_clean = dict(tv_options)
+                        tv_clean.pop("cookiefile", None)
+                        tv_clean.pop("cookiesfrombrowser", None)
+                        try:
+                            info = self._extract_info(url, tv_clean)
+                        except Exception:
+                            raise DownloadError(
+                                f"YouTube download failed: {self._download_error_detail(detail)}"
+                            ) from exc
+                    else:
+                        raise DownloadError(
+                            f"YouTube download failed: {self._download_error_detail(detail)}"
+                        ) from exc
             elif "requested format is not available" in detail.casefold() and authenticated:
                 # Account cookies can occasionally be assigned a YouTube client experiment that
                 # exposes only SABR/image formats. Retry the exact same bestvideo+bestaudio

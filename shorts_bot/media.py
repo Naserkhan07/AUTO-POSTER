@@ -52,6 +52,7 @@ class MediaProcessor:
 
     def extract_audio(self, source: Path, output: Path) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
+        # Use 16k mono mp3 to guarantee audio stays well below Groq Whisper's 25MB limit
         self._run(
             [
                 self.ffmpeg,
@@ -63,8 +64,10 @@ class MediaProcessor:
                 "1",
                 "-ar",
                 "16000",
+                "-c:a",
+                "libmp3lame",
                 "-b:a",
-                "32k",
+                "16k",
                 str(output),
             ],
             timeout=1800,

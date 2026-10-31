@@ -155,8 +155,17 @@ class AutopilotService:
             "--playlist-end",
             str(max_results),
             "--dump-json",
-            url,
+            "--extractor-args",
+            "youtube:player_client=tv,mweb",
         ]
+        cookie_file = None
+        for cand in [os.environ.get("YTDLP_COOKIE_FILE"), "cookies.txt", "youtube-cookies.txt"]:
+            if cand and Path(cand).exists():
+                cookie_file = cand
+                break
+        if cookie_file:
+            cmd.extend(["--cookies", str(cookie_file)])
+        cmd.append(url)
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
             if res.returncode != 0:

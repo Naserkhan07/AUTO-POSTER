@@ -382,7 +382,30 @@ repetition, and return only the corrected JSON object.
             f"Try again after the reset or change GROQ_MODEL. Details: {last_rate_limit}"
         ) from last_rate_limit
 
+    @staticmethod
+    def _compress_audio(audio_path: Path) -> Path:
+        """Compress audio with ffmpeg down to 16kbps mono so it easily stays below Groq's 25MB limit."""
+        import subprocess
+        compressed = audio_path.with_name(f"compressed-{audio_path.name}")
+        try:
+            cmd = [
+                "ffmpeg", "-y", "-i", str(audio_path),
+                "-vn", "-ac", "1", "-ar", "16000",
+                "-c:a", "libmp3lame", "-b:a", "16k",
+                str(compressed),
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if res.returncode == 0 and compressed.exists():
+                return compressed
+        except Exception:
+            pass
+        return audio_path
+
     async def _transcribe(self, audio_path: Path) -> str:
+        # Pre-check file size: Groq has a 25MB hard limit
+        if audio_path.exists() and audio_path.stat().st_size > 22 * 1024 * 1024:
+            audio_path = self._compress_audio(audio_path)
+
         result = None
         try:
             with audio_path.open("rb") as audio_file:
@@ -393,7 +416,10 @@ repetition, and return only the corrected JSON object.
                     timestamp_granularities=["word", "segment"],
                     temperature=0.0,
                 )
-        except Exception:
+        except Exception as first_exc:
+            if "413" in str(first_exc) or "too_large" in str(first_exc).lower():
+                # Compress and retry if file size error occurs
+                audio_path = self._compress_audio(audio_path)
             # Fall back to segment-only if word granularity is unsupported
             try:
                 with audio_path.open("rb") as audio_file:
