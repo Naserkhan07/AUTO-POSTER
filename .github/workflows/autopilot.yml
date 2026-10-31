@@ -36,6 +36,13 @@ jobs:
         run: |
           echo "$YOUTUBE_TOKEN_JSON" > youtube_token.json
 
+      - name: Setup YouTube Cookies
+        if: ${{ env.YOUTUBE_COOKIES != '' }}
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          echo "$YOUTUBE_COOKIES" > cookies.txt
+
       - name: Run Auto-Poster Pipeline
         env:
           RIGHTS_ACKNOWLEDGED: "true"
@@ -47,6 +54,7 @@ jobs:
           UPLOAD_FACEBOOK: "true"
           UPLOAD_INSTAGRAM: "true"
           UPLOAD_YOUTUBE: ${{ secrets.YOUTUBE_TOKEN_JSON != '' && 'true' || 'false' }}
+          YTDLP_COOKIE_FILE: ${{ hashFiles('cookies.txt') != '' && 'cookies.txt' || '' }}
         run: |
           python main.py --once
 

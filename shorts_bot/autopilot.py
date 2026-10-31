@@ -171,6 +171,11 @@ class AutopilotService:
                     data = json.loads(line)
                     vid = data.get("id")
                     title = data.get("title", "")
+                    live_status = str(data.get("live_status") or "").lower()
+                    if live_status in ("is_upcoming", "is_live", "post_live") or data.get("was_live"):
+                        continue
+                    if "live event" in title.lower() or "premieres in" in title.lower():
+                        continue
                     if vid:
                         videos.append(
                             AutopilotVideo(

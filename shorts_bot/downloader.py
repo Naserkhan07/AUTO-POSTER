@@ -169,7 +169,19 @@ class VideoDownloader:
         except yt_dlp.utils.DownloadError as exc:
             detail = str(exc)
             authenticated = "cookiefile" in options or "cookiesfrombrowser" in options
-            if "requested format is not available" in detail.casefold() and authenticated:
+            if ("sign in to confirm" in detail.casefold() or "bot" in detail.casefold()) and not authenticated:
+                # Cloud datacenter IPs are blocked by default web client. Retry with TV and mobile client.
+                tv_options = dict(options)
+                tv_options["extractor_args"] = {
+                    "youtube": {"player_client": ["tv", "mweb"]}
+                }
+                try:
+                    info = self._extract_info(url, tv_options)
+                except Exception:
+                    raise DownloadError(
+                        f"YouTube download failed: {self._download_error_detail(detail)}"
+                    ) from exc
+            elif "requested format is not available" in detail.casefold() and authenticated:
                 # Account cookies can occasionally be assigned a YouTube client experiment that
                 # exposes only SABR/image formats. Retry the exact same bestvideo+bestaudio
                 # selector without authentication; this often restores normal public streams.
