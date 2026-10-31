@@ -155,6 +155,91 @@ class VideoDownloader:
             )
         return detail
 
+    def _download_pytubefix(self, url: str, destination: Path) -> SourceVideo:
+        import subprocess
+        from pytubefix import YouTube
+
+        destination.mkdir(parents=True, exist_ok=True)
+        # pytubefix automatically generates YouTube Proof-of-Origin (PO) tokens using its bundled JS engine
+        for client in ("WEB", "ANDROID", "MWEB", "TV"):
+            try:
+                yt = YouTube(url, client=client)
+                title = yt.title or "Untitled video"
+                duration = float(yt.length or 0)
+                uploader = yt.author or "Unknown creator"
+                vid_id = yt.video_id or "unknown"
+
+                video_stream = (
+                    yt.streams.filter(only_video=True, file_extension="mp4")
+                    .order_by("resolution")
+                    .desc()
+                    .first()
+                    or yt.streams.filter(only_video=True).order_by("resolution").desc().first()
+                )
+                audio_stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
+
+                if not video_stream or not audio_stream:
+                    prog = yt.streams.filter(progressive=True).order_by("resolution").desc().first()
+                    if prog:
+                        out_path = destination / f"source.{prog.subtype}"
+                        prog.download(output_path=str(destination), filename=out_path.name)
+                        return SourceVideo(
+                            path=out_path,
+                            source_url=url,
+                            video_id=vid_id,
+                            title=title,
+                            uploader=uploader,
+                            duration_seconds=duration,
+                        )
+                    continue
+
+                v_temp = destination / "temp_video.mp4"
+                a_temp = destination / f"temp_audio.{audio_stream.subtype}"
+                video_stream.download(output_path=str(destination), filename=v_temp.name)
+                audio_stream.download(output_path=str(destination), filename=a_temp.name)
+
+                merged_path = destination / "source.mkv"
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(v_temp),
+                    "-i", str(a_temp),
+                    "-c", "copy",
+                    "-shortest",
+                    str(merged_path),
+                ]
+                subprocess.run(cmd, check=True, capture_output=True)
+
+                v_temp.unlink(missing_ok=True)
+                a_temp.unlink(missing_ok=True)
+
+                if duration <= 0:
+                    try:
+                        probe = subprocess.run(
+                            [
+                                "ffprobe", "-v", "error",
+                                "-show_entries", "format=duration",
+                                "-of", "default=noprint_wrappers=1:nokey=1",
+                                str(merged_path),
+                            ],
+                            capture_output=True, text=True, check=True,
+                        )
+                        duration = float(probe.stdout.strip())
+                    except Exception:
+                        duration = 60.0
+
+                return SourceVideo(
+                    path=merged_path,
+                    source_url=url,
+                    video_id=vid_id,
+                    title=title,
+                    uploader=uploader,
+                    duration_seconds=duration,
+                )
+            except Exception:
+                continue
+
+        raise DownloadError("YouTube download failed with both yt-dlp and pytubefix.")
+
     def _download_sync(self, url: str, destination: Path) -> SourceVideo:
         destination.mkdir(parents=True, exist_ok=True)
         output_template = str(destination / "source.%(ext)s")
@@ -187,13 +272,19 @@ class VideoDownloader:
                         try:
                             info = self._extract_info(url, mobile_clean)
                         except Exception:
+                            try:
+                                return self._download_pytubefix(url, destination)
+                            except Exception:
+                                raise DownloadError(
+                                    f"YouTube download failed: {self._download_error_detail(detail)}"
+                                ) from exc
+                    else:
+                        try:
+                            return self._download_pytubefix(url, destination)
+                        except Exception:
                             raise DownloadError(
                                 f"YouTube download failed: {self._download_error_detail(detail)}"
                             ) from exc
-                    else:
-                        raise DownloadError(
-                            f"YouTube download failed: {self._download_error_detail(detail)}"
-                        ) from exc
             elif "live event will begin" in detail.casefold() or "premieres in" in detail.casefold():
                 raise DownloadError(f"Scheduled livestream/premiere cannot be downloaded: {detail}")
             elif "requested format is not available" in detail.casefold() and authenticated:

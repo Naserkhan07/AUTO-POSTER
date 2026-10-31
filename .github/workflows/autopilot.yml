@@ -35,7 +35,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade yt-dlp yt-dlp-ejs yt-dlp-getpot-wpc
+          pip install --upgrade yt-dlp yt-dlp-ejs yt-dlp-getpot-wpc pytubefix
           pip install -e .
 
       - name: Setup YouTube Token

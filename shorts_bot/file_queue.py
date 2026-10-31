@@ -315,6 +315,9 @@ async def run_file_queue(
                             "It remains queued and will retry after the next credential cycle.",
                             flush=True,
                         )
+                elif not watch:
+                    # In --once mode, successfully processing 1 video creates enough clips for scheduled distribution.
+                    break
 
             if not processed_new_url and time.monotonic() >= next_pending_retry:
                 await retry_pending_jobs()
