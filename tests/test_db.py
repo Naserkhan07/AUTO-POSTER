@@ -118,3 +118,14 @@ def test_lists_jobs_with_pending_platform_uploads(tmp_path: Path) -> None:
     assert repository.list_pending_upload_jobs(youtube=False, instagram=False, facebook=True) == [
         repository.get(job.id)
     ]
+
+
+def test_used_gameplay_tracking(tmp_path: Path) -> None:
+    repository = JobRepository(tmp_path / "jobs.db")
+    assert not repository.is_gameplay_used("gta5", "gta_clip1")
+    assert repository.get_used_gameplay("gta5") == set()
+
+    repository.mark_gameplay_used("gta5", "gta_clip1", job_id="job_abc")
+    assert repository.is_gameplay_used("gta5", "gta_clip1")
+    assert not repository.is_gameplay_used("gta5", "gta_clip2")
+    assert repository.get_used_gameplay("gta5") == {"gta_clip1"}

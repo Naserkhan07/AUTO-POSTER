@@ -86,7 +86,7 @@ class FakeYouTubeUploader:
 
 class FakeInstagramUploader:
     async def upload(self, video_path: Path, plan: ShortPlan) -> InstagramUploadResult:
-        assert plan.instagram_caption.startswith("@wzz.unfiltered @precious.tulip1\n\n")
+        assert plan.instagram_caption.startswith("@wzz.unfiltered\n\n")
         assert "Instagram caption" in plan.instagram_caption
         assert plan.instagram_caption.endswith("#Reels")
         return InstagramUploadResult("instagram-id", "https://instagram.com/reel/example")
@@ -318,7 +318,7 @@ async def test_one_reel_failure_does_not_skip_later_reels(tmp_path: Path) -> Non
     assert facebook_attempts == [0, 40]
     assert all(caption.count("#") == 30 for caption in instagram_captions)
     assert all(
-        caption.startswith("@wzz.unfiltered @precious.tulip1\n\n") for caption in instagram_captions
+        caption.startswith("@wzz.unfiltered\n\n") for caption in instagram_captions
     )
     assert "Caption A #special" in instagram_captions[0]
     assert "Caption B #other" in instagram_captions[1]
@@ -615,40 +615,6 @@ async def test_keeps_clip_files_while_any_platform_upload_is_pending(tmp_path: P
 
     assert result.status == JobStatus.COMPLETE
     assert clip.facebook_video_id is None
-    assert clip.output_path is not None
-    assert Path(clip.output_path).exists()
-
-
-async def test_keeps_published_clip_files_until_they_are_bundled(tmp_path: Path) -> None:
-    from shorts_bot.store_bundles import ReelBundleBuilder
-
-    settings = replace(
-        settings_for(tmp_path),
-        delete_uploaded_clips=True,
-        store_bundles_enabled=True,
-        store_bundle_size=2,
-        store_bundle_dir=tmp_path / "store-bundles",
-    )
-    repository = JobRepository(settings.database_path)
-    job = repository.create(0, 0, "https://youtu.be/example")
-
-    services = WorkflowServices(
-        downloader=FakeDownloader(),  # type: ignore[arg-type]
-        media=FakeMedia(),  # type: ignore[arg-type]
-        planner=FakePlanner(),  # type: ignore[arg-type]
-        enhancer=None,
-        youtube_uploader=FakeYouTubeUploader(),  # type: ignore[arg-type]
-        instagram_uploader=FakeInstagramUploader(),  # type: ignore[arg-type]
-        bundle_builder=ReelBundleBuilder(tmp_path / "store-bundles", 2),
-    )
-
-    result = await WorkflowPipeline(settings, repository, services).process(job.id)
-    clip = repository.list_clips(job.id)[0]
-
-    # Only one clip exists and the bundle needs two, so the clip is not bundled yet
-    # and its local file must be preserved for the future Splitzzz pack.
-    assert result.status == JobStatus.COMPLETE
-    assert clip.youtube_video_id == "youtube-id"
     assert clip.output_path is not None
     assert Path(clip.output_path).exists()
 

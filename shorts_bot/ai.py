@@ -383,17 +383,44 @@ repetition, and return only the corrected JSON object.
         ) from last_rate_limit
 
     async def _transcribe(self, audio_path: Path) -> str:
+        result = None
         try:
             with audio_path.open("rb") as audio_file:
                 result = await self.client.audio.transcriptions.create(
                     model=self.transcription_model,
                     file=(audio_path.name, audio_file.read()),
                     response_format="verbose_json",
-                    timestamp_granularities=["segment"],
+                    timestamp_granularities=["word", "segment"],
                     temperature=0.0,
                 )
-        except Exception as exc:
-            raise AIError(f"Groq audio transcription failed: {exc}") from exc
+        except Exception:
+            # Fall back to segment-only if word granularity is unsupported
+            try:
+                with audio_path.open("rb") as audio_file:
+                    result = await self.client.audio.transcriptions.create(
+                        model=self.transcription_model,
+                        file=(audio_path.name, audio_file.read()),
+                        response_format="verbose_json",
+                        timestamp_granularities=["segment"],
+                        temperature=0.0,
+                    )
+            except Exception as exc:
+                raise AIError(f"Groq audio transcription failed: {exc}") from exc
+
+        # Cache raw transcription data for ASS captions
+        try:
+            cache_path = audio_path.with_suffix(".json")
+            if hasattr(result, "model_dump"):
+                raw_json = json.dumps(result.model_dump())
+            elif hasattr(result, "to_dict"):
+                raw_json = json.dumps(result.to_dict())
+            elif isinstance(result, dict):
+                raw_json = json.dumps(result)
+            else:
+                raw_json = str(result)
+            cache_path.write_text(raw_json, encoding="utf-8")
+        except Exception:
+            pass
 
         lines: list[str] = []
         segments = _field(result, "segments", []) or []

@@ -9,19 +9,21 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from .ai import AIPlanner, apply_instagram_hashtags, full_coverage_plans
 from .archive import build_job_folder, open_local_folder
+from .captions import CaptionStyle, create_caption_file, parse_whisper_result
 from .config import Settings
 from .db import JobRepository
 from .downloader import VideoDownloader
 from .enhancer import APIMarketVideoEnhancer, CloudinaryTemporaryVideoHost
 from .errors import UploadError, UploadLimitError, WorkflowError
 from .facebook import FacebookReelUploader
+from .gameplay import GameplayManager
 from .instagram import InstagramUploader
 from .media import MediaProcessor
 from .models import Job, JobClip, JobStatus, ShortPlan, SourceVideo
-from .store_bundles import R2BundleUploader, ReelBundleBuilder
 from .youtube import YouTubeUploader
 
 logger = logging.getLogger(__name__)
@@ -38,7 +40,7 @@ class WorkflowServices:
     youtube_uploader: YouTubeUploader | None
     instagram_uploader: InstagramUploader | None
     facebook_uploader: FacebookReelUploader | None = None
-    bundle_builder: ReelBundleBuilder | None = None
+    gameplay: GameplayManager | None = None
     unavailable_platforms: dict[str, str] = field(default_factory=dict)
     # monotonic time until which a platform is skipped after an upload-limit
     # error, so Meta spam-protection blocks are allowed to lift instead of
@@ -95,7 +97,7 @@ class WorkflowServices:
         return report
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> WorkflowServices:
+    def from_settings(cls, settings: Settings, repository: Any = None) -> WorkflowServices:
         return cls(
             downloader=VideoDownloader(
                 cookies_from_browser=settings.ytdlp_cookies_from_browser,
@@ -164,22 +166,13 @@ class WorkflowServices:
                 if settings.upload_facebook
                 else None
             ),
-            bundle_builder=(
-                ReelBundleBuilder(
-                    settings.store_bundle_dir,
-                    settings.store_bundle_size,
-                    uploader=(
-                        R2BundleUploader(
-                            settings.r2_account_id,
-                            settings.r2_access_key_id,
-                            settings.r2_secret_access_key,
-                            settings.r2_bucket_name,
-                        )
-                        if settings.r2_account_id
-                        else None
-                    ),
+            gameplay=(
+                GameplayManager(
+                    base_dir=settings.gameplay_dir,
+                    categories=settings.gameplay_rotation,
+                    db=repository,
                 )
-                if settings.store_bundles_enabled
+                if settings.enable_gameplay
                 else None
             ),
         )
@@ -323,6 +316,7 @@ class WorkflowPipeline:
                         total_clips,
                         job_dir,
                         blocked_platforms,
+                        full_transcript=full_transcript,
                     )
                 except Exception as exc:
                     self.repository.update_clip(
@@ -364,19 +358,6 @@ class WorkflowPipeline:
                 )
             else:
                 progress = f"Created {len(clips)} local Shorts"
-
-            if self.services.bundle_builder:
-                try:
-                    bundles = await asyncio.to_thread(
-                        self.services.bundle_builder.create_ready_bundles,
-                        self.repository,
-                    )
-                    if bundles:
-                        bundle_names = ", ".join(bundle.zip_path.name for bundle in bundles)
-                        progress += f"; local Splitzzz pack created: {bundle_names}"
-                except WorkflowError as exc:
-                    logger.warning("Store bundle creation is pending: %s", exc)
-                    progress += "; store bundle creation pending automatic retry"
 
             if self.settings.delete_uploaded_clips:
                 deleted_clip_files = self._delete_published_clip_files(job, clips)
@@ -465,20 +446,14 @@ class WorkflowPipeline:
     def _delete_published_clip_files(self, job: Job, clips: list[JobClip]) -> int:
         """Remove local MP4s/thumbnails of clips that are published on every platform.
 
-        Files stay on disk while any enabled platform upload is pending, and, when
-        Splitzzz store bundles are enabled, until the clip is inside a bundle ZIP.
+        Files stay on disk while any enabled platform upload is pending.
         """
-        bundled: set[int] | None = None
-        if self.services.bundle_builder:
-            bundled = self.repository.bundled_clip_indexes(job.id)
         job_dir = self.settings.work_dir / "jobs" / job.id
         removed = 0
         for clip in clips:
             if not clip.output_path:
                 continue
             if not self._clip_published_everywhere(clip):
-                continue
-            if bundled is not None and clip.clip_index not in bundled:
                 continue
             candidates = [
                 Path(clip.output_path),
@@ -537,6 +512,7 @@ class WorkflowPipeline:
         total_clips: int,
         job_dir: Path,
         blocked_platforms: dict[str, str],
+        full_transcript: str | None = None,
     ) -> JobClip:
         if self._clip_published_everywhere(clip):
             # Every enabled platform already has this clip; never re-render or re-upload it.
@@ -563,13 +539,79 @@ class WorkflowPipeline:
                 JobStatus.RENDERING,
                 f"Rendering Short {clip.clip_index}/{total_clips}",
             )
-            await asyncio.to_thread(
-                self.services.media.render_short,
-                source.path,
-                output_path,
-                plan.start_seconds,
-                plan.duration_seconds,
-            )
+            gameplay_path: Path | None = None
+            gameplay_offset: float = 0.0
+            if self.services.gameplay:
+                try:
+                    selection = self.services.gameplay.select_gameplay(
+                        clip_index=clip.clip_index,
+                        duration_needed=plan.duration_seconds,
+                        job_id=job.id,
+                    )
+                    gameplay_path = selection.path
+                    gameplay_offset = selection.start_seconds
+                except Exception as exc:
+                    logger.warning("Could not select gameplay clip: %s", exc)
+
+            captions_path: Path | None = None
+            if self.settings.enable_captions:
+                try:
+                    words = []
+                    transcript_json_path = job_dir / "transcript-audio.json"
+                    if transcript_json_path.exists():
+                        try:
+                            t_data = json.loads(transcript_json_path.read_text(encoding="utf-8"))
+                            words = parse_whisper_result(t_data)
+                        except Exception:
+                            words = []
+                    if not words and full_transcript:
+                        words = parse_whisper_result(full_transcript)
+
+                    if words:
+                        ass_file = job_dir / f"captions-{clip.clip_index:03d}.ass"
+                        style = CaptionStyle(
+                            font_name=self.settings.caption_font,
+                            font_size=self.settings.caption_font_size,
+                            highlight_colors=self.settings.caption_highlight_colors,
+                        )
+                        create_caption_file(
+                            output_path=ass_file,
+                            words=words,
+                            clip_start=plan.start_seconds,
+                            clip_duration=plan.duration_seconds,
+                            style=style,
+                        )
+                        captions_path = ass_file
+                except Exception as exc:
+                    logger.warning("Could not create caption file: %s", exc)
+
+            render_kwargs: dict[str, Any] = {}
+            if gameplay_path is not None:
+                render_kwargs["gameplay_video"] = gameplay_path
+                render_kwargs["gameplay_start_seconds"] = gameplay_offset
+            if captions_path is not None:
+                render_kwargs["subtitles_path"] = captions_path
+
+            try:
+                await asyncio.to_thread(
+                    self.services.media.render_short,
+                    source.path,
+                    output_path,
+                    plan.start_seconds,
+                    plan.duration_seconds,
+                    **render_kwargs,
+                )
+            except TypeError as exc:
+                if render_kwargs and "unexpected keyword argument" in str(exc):
+                    await asyncio.to_thread(
+                        self.services.media.render_short,
+                        source.path,
+                        output_path,
+                        plan.start_seconds,
+                        plan.duration_seconds,
+                    )
+                else:
+                    raise
             clip = self.repository.update_clip(
                 job.id,
                 clip.clip_index,

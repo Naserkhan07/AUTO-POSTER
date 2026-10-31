@@ -12,3 +12,71 @@ user_id = "17841432791787477"
 [facebook]
 # Numeric Facebook Page ID connected to the Instagram professional account
 page_id = "1231108530089378"
+
+# ----------------------------------------------------------------------
+# Optimal Audience Timing & Rate-Limit Scheduler
+# ----------------------------------------------------------------------
+[scheduler]
+enabled = true                  # Enforces optimal time slots and daily safety caps
+advance_prep_minutes = 30       # Automatically prepares and renders clips 30m before upload
+max_daily_youtube = 3           # Max safe YouTube uploads/day (protects API quota)
+max_daily_instagram = 3         # Max safe Instagram uploads/day (protects from spam flags)
+max_daily_facebook = 3          # Max safe Facebook uploads/day
+
+# ----------------------------------------------------------------------
+# Hands-Free Channel Auto-Pilot
+# Automatically watches creator channels and queues new uploads into links.txt
+# ----------------------------------------------------------------------
+[autopilot]
+enabled = true
+poll_interval_minutes = 15      # Check every 15 minutes
+ignore_shorts = true            # Strictly filter out Shorts; only take full-length regular videos
+queue_latest_on_start = true    # Automatically queues latest videos on start, no manual links.txt entry needed!
+
+[[autopilot.channels]]
+name = "MrBeast"
+channel_id = "UCX6OQ3DkcsbYNE6H8uQQuVA"
+
+[[autopilot.channels]]
+name = "Outdoor Boys"
+channel_id = "UCfpCQ89W9wjkHc8J_6eTbBg"
+
+[[autopilot.channels]]
+name = "Nick DiGiovanni"
+channel_id = "UCMyOj6fhvKFMjxUCp3b_3gA"
+
+[[autopilot.channels]]
+name = "IShowSpeed"
+channel_id = "UCWsDFcIhY2DBi3GB5uykGXA"
+
+[[autopilot.channels]]
+name = "BeastBoyShub"
+channel_id = "UCI86prlqXhbkREDMTaORvLQ"
+
+[[autopilot.channels]]
+name = "GothamChess"
+channel_id = "UCQHX6ViZmPsWiYSFAyS0a3Q"
+
+[[autopilot.channels]]
+name = "Dream"
+channel_id = "UCTkXRDQl0luXxVQrRQvWS6w"
+
+[[autopilot.channels]]
+name = "Not Your Type"
+channel_id = "UCKnNrlSJF_hWoBSz1lY_D7g"
+
+[[autopilot.channels]]
+name = "HardToonz"
+channel_id = "UCIPqzmQYnE2HyZyLkoCJ3Iw"
+
+[[autopilot.channels]]
+name = "Samay Raina"
+channel_id = "UCAov2BBv1ZJav0c_yHEciAw"
+
+[[autopilot.channels]]
+name = "CarryMinati"
+channel_id = "UCj22tfcQrWG7EMEKS0qLeEg"
+
+[[autopilot.channels]]
+name = "Warangal Diaries"
+channel_id = "UCWSyWK6oS5VL3RrJZuWsdSA"

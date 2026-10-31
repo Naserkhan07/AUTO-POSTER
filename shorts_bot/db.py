@@ -56,24 +56,21 @@ CREATE TABLE IF NOT EXISTS job_clips (
 );
 CREATE INDEX IF NOT EXISTS idx_job_clips_job ON job_clips(job_id, clip_index);
 
-CREATE TABLE IF NOT EXISTS store_bundles (
-    bundle_number INTEGER PRIMARY KEY,
-    zip_path TEXT NOT NULL,
-    clip_count INTEGER NOT NULL,
-    website_object_key TEXT,
-    website_uploaded_at TEXT,
-    created_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS autopilot_seen (
+    video_id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    published_at TEXT,
+    seen_at TEXT NOT NULL,
+    queued INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS store_bundle_clips (
-    bundle_number INTEGER NOT NULL,
-    position INTEGER NOT NULL,
-    job_id TEXT NOT NULL,
-    clip_index INTEGER NOT NULL,
-    PRIMARY KEY (job_id, clip_index),
-    UNIQUE (bundle_number, position),
-    FOREIGN KEY (bundle_number) REFERENCES store_bundles(bundle_number) ON DELETE CASCADE,
-    FOREIGN KEY (job_id, clip_index) REFERENCES job_clips(job_id, clip_index) ON DELETE CASCADE
+CREATE TABLE IF NOT EXISTS used_gameplay (
+    category TEXT NOT NULL,
+    video_identifier TEXT NOT NULL,
+    used_for_job_id TEXT,
+    used_at TEXT NOT NULL,
+    PRIMARY KEY (category, video_identifier)
 );
 """
 
@@ -91,10 +88,6 @@ _CLIP_MIGRATION_COLUMNS = {
     "enhancement_complete": "INTEGER NOT NULL DEFAULT 0",
     "facebook_video_id": "TEXT",
     "facebook_url": "TEXT",
-}
-_STORE_BUNDLE_MIGRATION_COLUMNS = {
-    "website_object_key": "TEXT",
-    "website_uploaded_at": "TEXT",
 }
 
 
@@ -117,14 +110,6 @@ class JobRepository:
             for name, column_type in _CLIP_MIGRATION_COLUMNS.items():
                 if name not in existing_clip_columns:
                     connection.execute(f"ALTER TABLE job_clips ADD COLUMN {name} {column_type}")
-
-            existing_store_columns = {
-                row["name"]
-                for row in connection.execute("PRAGMA table_info(store_bundles)").fetchall()
-            }
-            for name, column_type in _STORE_BUNDLE_MIGRATION_COLUMNS.items():
-                if name not in existing_store_columns:
-                    connection.execute(f"ALTER TABLE store_bundles ADD COLUMN {name} {column_type}")
 
             # Meta can return Page Reel permalinks as paths such as /reel/123/. Normalize
             # previously stored values so manifests and progress output always contain links.
@@ -448,35 +433,6 @@ class JobRepository:
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
-    def list_unbundled_clips(self, limit: int = 500) -> list[JobClip]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT job_clips.*
-                FROM job_clips
-                JOIN jobs ON jobs.id = job_clips.job_id
-                LEFT JOIN store_bundle_clips
-                  ON store_bundle_clips.job_id = job_clips.job_id
-                 AND store_bundle_clips.clip_index = job_clips.clip_index
-                WHERE store_bundle_clips.job_id IS NULL
-                  AND job_clips.output_path IS NOT NULL
-                  AND job_clips.metadata_ready = 1
-                ORDER BY jobs.created_at, job_clips.clip_index
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-        return [self._clip_from_row(row) for row in rows]
-
-    def bundled_clip_indexes(self, job_id: str) -> set[int]:
-        """Clip indexes of this job that are already part of a Splitzzz store bundle."""
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT clip_index FROM store_bundle_clips WHERE job_id = ?",
-                (job_id,),
-            ).fetchall()
-        return {int(row["clip_index"]) for row in rows}
-
     def clip_sequence_index(self, job_id: str, clip_index: int) -> int:
         with self._connect() as connection:
             current = connection.execute(
@@ -498,68 +454,95 @@ class JobRepository:
             ).fetchone()
         return int(row["preceding"])
 
-    def next_store_bundle_number(self) -> int:
+    def is_autopilot_seen(self, video_id: str) -> bool:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT COALESCE(MAX(bundle_number), 0) + 1 AS next_number FROM store_bundles"
+                "SELECT 1 FROM autopilot_seen WHERE video_id = ?",
+                (video_id,),
             ).fetchone()
-        return int(row["next_number"])
+            return row is not None
 
-    def save_store_bundle(
+    def is_video_queued_or_processed(self, video_id: str) -> bool:
+        """Check if video was previously queued or processed (ensuring it is NEVER taken again)."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM autopilot_seen WHERE video_id = ? AND queued = 1 LIMIT 1",
+                (video_id,),
+            ).fetchone()
+            if row is not None:
+                return True
+            job_row = connection.execute(
+                "SELECT 1 FROM jobs WHERE source_url LIKE ? LIMIT 1",
+                (f"%{video_id}%",),
+            ).fetchone()
+            return job_row is not None
+
+    def list_autopilot_seen_ids(self) -> set[str]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT video_id FROM autopilot_seen").fetchall()
+            return {row["video_id"] for row in rows}
+
+    def has_channel_queued_video(self, channel_id: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM autopilot_seen WHERE channel_id = ? AND queued = 1 LIMIT 1",
+                (channel_id,),
+            ).fetchone()
+            return row is not None
+
+    def mark_autopilot_seen(
         self,
-        bundle_number: int,
-        zip_path: Path,
-        clips: list[JobClip],
+        video_id: str,
+        channel_id: str,
+        title: str,
+        published_at: str | None = None,
+        queued: bool = False,
     ) -> None:
         now = self._now()
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO store_bundles (bundle_number, zip_path, clip_count, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT OR REPLACE INTO autopilot_seen (
+                    video_id, channel_id, title, published_at, seen_at, queued
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (bundle_number, str(zip_path), len(clips), now),
+                (video_id, channel_id, title, published_at or "", now, 1 if queued else 0),
             )
-            for position, clip in enumerate(clips, start=1):
-                connection.execute(
-                    """
-                    INSERT INTO store_bundle_clips (
-                        bundle_number, position, job_id, clip_index
-                    ) VALUES (?, ?, ?, ?)
-                    """,
-                    (bundle_number, position, clip.job_id, clip.clip_index),
-                )
 
-    def list_store_bundles(self) -> list[dict[str, object]]:
+    def is_gameplay_used(self, category: str, video_identifier: str) -> bool:
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM store_bundles ORDER BY bundle_number"
-            ).fetchall()
-        return [dict(row) for row in rows]
+            row = connection.execute(
+                "SELECT 1 FROM used_gameplay WHERE category = ? AND video_identifier = ? LIMIT 1",
+                (category, video_identifier),
+            ).fetchone()
+            return row is not None
 
-    def list_pending_store_uploads(self) -> list[dict[str, object]]:
+    def mark_gameplay_used(
+        self, category: str, video_identifier: str, job_id: str | None = None
+    ) -> None:
+        now = self._now()
         with self._connect() as connection:
-            rows = connection.execute(
+            connection.execute(
                 """
-                SELECT * FROM store_bundles
-                WHERE website_object_key IS NULL
-                ORDER BY bundle_number
-                """
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def mark_store_bundle_uploaded(self, bundle_number: int, object_key: str) -> None:
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE store_bundles
-                SET website_object_key = ?, website_uploaded_at = ?
-                WHERE bundle_number = ?
+                INSERT OR REPLACE INTO used_gameplay (
+                    category, video_identifier, used_for_job_id, used_at
+                ) VALUES (?, ?, ?, ?)
                 """,
-                (object_key, self._now(), bundle_number),
+                (category, video_identifier, job_id, now),
             )
-            if cursor.rowcount != 1:
-                raise KeyError(f"Unknown store bundle {bundle_number}")
+
+    def get_used_gameplay(self, category: str | None = None) -> set[str]:
+        with self._connect() as connection:
+            if category:
+                rows = connection.execute(
+                    "SELECT video_identifier FROM used_gameplay WHERE category = ?",
+                    (category,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT video_identifier FROM used_gameplay"
+                ).fetchall()
+            return {row["video_identifier"] for row in rows}
 
     def fail_interrupted(self) -> int:
         running = (

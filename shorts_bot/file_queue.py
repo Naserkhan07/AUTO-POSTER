@@ -5,9 +5,11 @@ import asyncio
 import os
 import sys
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .autopilot import AutopilotService
 from .config import Settings
 from .db import JobRepository
 from .downloader import is_youtube_url
@@ -46,6 +48,8 @@ class LinkFileQueue:
         for line in original_lines:
             if line.strip() == url:
                 removed = True
+                if output_lines and output_lines[-1].strip().startswith("# [Autopilot:"):
+                    output_lines.pop()
                 continue
             output_lines.append(line)
         if not removed:
@@ -72,14 +76,35 @@ async def run_file_queue(
     resume_job_id: str | None = None,
     expand_job_id: str | None = None,
     rebuild_job_id: str | None = None,
+    disable_autopilot: bool = False,
 ) -> int:
     settings.validate_file_queue()
     settings.prepare_directories()
     repository = JobRepository(settings.database_path)
     repository.fail_interrupted()
-    services = WorkflowServices.from_settings(settings)
+    services = WorkflowServices.from_settings(settings, repository=repository)
     services.media.check_tools()
     link_queue = LinkFileQueue(settings.links_file, settings.downloaded_links_log)
+    autopilot: AutopilotService | None = None
+    if settings.autopilot_enabled and not disable_autopilot:
+        autopilot = AutopilotService.from_settings(settings, repository)
+        if autopilot.channels:
+            print(
+                f"[Autopilot] Active for {len(autopilot.channels)} channel(s). "
+                f"Polling every {autopilot.poll_interval_minutes}m.",
+                flush=True,
+            )
+            try:
+                bootstrapped = await autopilot.bootstrap_baseline(
+                    settings.links_file, settings.downloaded_links_log
+                )
+                if bootstrapped:
+                    print(
+                        f"[Autopilot] Initial startup queued {bootstrapped} video(s).",
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(f"[Autopilot] Baseline setup notice: {exc}", file=sys.stderr, flush=True)
 
     async def report(job: Job, message: str) -> None:
         print(f"[{job.id}] {job.status.value}: {message}", flush=True)
@@ -185,71 +210,114 @@ async def run_file_queue(
 
     next_credential_check = time.monotonic() + settings.credential_check_minutes * 60
     next_pending_retry = time.monotonic()
+    autopilot_task: asyncio.Task[None] | None = None
 
-    while True:
-        if not workflow_ready or time.monotonic() >= next_credential_check:
+    async def autopilot_worker() -> None:
+        """
+        Runs concurrently in the background, updating links.txt every 15 minutes
+        with any newly published videos from the monitored channels.
+        """
+        while True:
+            interval = autopilot.poll_interval_seconds if autopilot else 900
+            await asyncio.sleep(interval)
             try:
-                refreshed = Settings.from_env(override=True)
-                refreshed.validate_file_queue()
-                refreshed.prepare_directories()
-                refreshed_services = WorkflowServices.from_settings(refreshed)
-                refreshed_services.media.check_tools()
-                refreshed_report = await refreshed_services.preflight()
-                settings = refreshed
-                services = refreshed_services
-                link_queue = LinkFileQueue(settings.links_file, settings.downloaded_links_log)
-                pipeline = WorkflowPipeline(
-                    settings,
-                    repository,
-                    services,
-                    on_status=report,
-                    on_downloaded=downloaded,
-                )
-                workflow_ready = True
-                failed_urls_this_session.clear()
-                print("Credential report: " + " | ".join(refreshed_report), flush=True)
-                next_credential_check = time.monotonic() + settings.credential_check_minutes * 60
-                next_pending_retry = min(next_pending_retry, time.monotonic())
-            except (ConfigurationError, WorkflowError) as exc:
-                workflow_ready = False
-                print(
-                    f"Credential refresh failed; retrying automatically: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                next_credential_check = time.monotonic() + 300
+                if autopilot and autopilot.enabled:
+                    queued_videos = await autopilot.check_and_queue(
+                        settings.links_file, settings.downloaded_links_log
+                    )
+                    if queued_videos:
+                        for v in queued_videos:
+                            print(
+                                f"[Autopilot] New upload from {v.channel_name}: '{v.title}' "
+                                f"-> queued in {settings.links_file}",
+                                flush=True,
+                            )
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                print(f"[Autopilot] 15m periodic check error: {exc}", file=sys.stderr, flush=True)
 
-        if not workflow_ready:
-            if not watch:
-                return 1
-            await asyncio.sleep(min(settings.links_poll_seconds, 30))
-            continue
+    if watch and autopilot and autopilot.enabled:
+        autopilot_task = asyncio.create_task(autopilot_worker())
 
-        urls = link_queue.pending_urls()
-        processed_new_url = False
-        for url in urls:
-            if url in failed_urls_this_session:
-                continue
-            processed_new_url = True
-            job = repository.create(chat_id=0, user_id=0, source_url=url)
-            result = await pipeline.process(job.id)
-            if result.error:
-                any_failures = True
-                failed_urls_this_session.add(url)
-                if watch:
+    try:
+        while True:
+            if not workflow_ready or time.monotonic() >= next_credential_check:
+                try:
+                    refreshed = Settings.from_env(override=True)
+                    refreshed.validate_file_queue()
+                    refreshed.prepare_directories()
+                    refreshed_services = WorkflowServices.from_settings(
+                        refreshed, repository=repository
+                    )
+                    refreshed_services.media.check_tools()
+                    refreshed_report = await refreshed_services.preflight()
+                    settings = refreshed
+                    services = refreshed_services
+                    link_queue = LinkFileQueue(settings.links_file, settings.downloaded_links_log)
+                    if settings.autopilot_enabled and not disable_autopilot:
+                        autopilot = AutopilotService.from_settings(settings, repository)
+                    else:
+                        autopilot = None
+                    pipeline = WorkflowPipeline(
+                        settings,
+                        repository,
+                        services,
+                        on_status=report,
+                        on_downloaded=downloaded,
+                    )
+                    workflow_ready = True
+                    failed_urls_this_session.clear()
+                    print("Credential report: " + " | ".join(refreshed_report), flush=True)
+                    next_credential_check = (
+                        time.monotonic() + settings.credential_check_minutes * 60
+                    )
+                    next_pending_retry = min(next_pending_retry, time.monotonic())
+                except (ConfigurationError, WorkflowError) as exc:
+                    workflow_ready = False
                     print(
-                        f"[{job.id}] URL will not retry again in this session. "
-                        "It remains queued and will retry after the next credential cycle.",
+                        f"Credential refresh failed; retrying automatically: {exc}",
+                        file=sys.stderr,
                         flush=True,
                     )
+                    next_credential_check = time.monotonic() + 300
 
-        if not processed_new_url and time.monotonic() >= next_pending_retry:
-            await retry_pending_jobs()
-            next_pending_retry = time.monotonic() + settings.credential_check_minutes * 60
+            if not workflow_ready:
+                if not watch:
+                    return 1
+                await asyncio.sleep(min(settings.links_poll_seconds, 30))
+                continue
 
-        if not watch:
-            return 1 if any_failures else 0
-        await asyncio.sleep(settings.links_poll_seconds)
+            urls = link_queue.pending_urls()
+            processed_new_url = False
+            for url in urls:
+                if url in failed_urls_this_session:
+                    continue
+                processed_new_url = True
+                job = repository.create(chat_id=0, user_id=0, source_url=url)
+                result = await pipeline.process(job.id)
+                if result.error:
+                    any_failures = True
+                    failed_urls_this_session.add(url)
+                    if watch:
+                        print(
+                            f"[{job.id}] URL will not retry again in this session. "
+                            "It remains queued and will retry after the next credential cycle.",
+                            flush=True,
+                        )
+
+            if not processed_new_url and time.monotonic() >= next_pending_retry:
+                await retry_pending_jobs()
+                next_pending_retry = time.monotonic() + settings.credential_check_minutes * 60
+
+            if not watch:
+                return 1 if any_failures else 0
+            await asyncio.sleep(settings.links_poll_seconds)
+    finally:
+        if autopilot_task:
+            autopilot_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await autopilot_task
 
 
 def main() -> None:
@@ -280,6 +348,11 @@ def main() -> None:
         metavar="JOB_ID",
         help="Re-render and re-upload every clip using current quality settings",
     )
+    parser.add_argument(
+        "--no-autopilot",
+        action="store_true",
+        help="Disable automatic channel monitoring during this run",
+    )
     args = parser.parse_args()
     try:
         settings = Settings.from_env()
@@ -290,6 +363,7 @@ def main() -> None:
                 resume_job_id=args.resume,
                 expand_job_id=args.expand,
                 rebuild_job_id=args.rebuild,
+                disable_autopilot=args.no_autopilot,
             )
         )
     except ConfigurationError as exc:

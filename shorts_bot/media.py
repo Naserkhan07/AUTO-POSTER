@@ -77,80 +77,155 @@ class MediaProcessor:
         output: Path,
         start_seconds: float,
         duration_seconds: float,
+        gameplay_video: Path | None = None,
+        gameplay_start_seconds: float = 0.0,
+        subtitles_path: Path | None = None,
     ) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
-        command = [
-            self.ffmpeg,
-            "-y",
-            "-ss",
-            f"{start_seconds:.3f}",
-            "-i",
-            str(source),
-            "-t",
-            f"{duration_seconds:.3f}",
-            "-sws_flags",
-            "lanczos",
-        ]
-        if self.video_layout == "blurred_background":
-            video_filter = (
-                "[0:v]split=2[bg][fg];"
-                "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
-                "crop=1080:1920,boxblur=30:2[blurred];"
-                "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[front];"
-                "[blurred][front]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
+        sub_escaped = (
+            subtitles_path.resolve().as_posix().replace(":", r"\:")
+            if subtitles_path and subtitles_path.exists()
+            else None
+        )
+
+        use_gameplay = (self.video_layout == "split_gameplay") or (gameplay_video is not None)
+        if use_gameplay and gameplay_video is not None:
+            command = [
+                self.ffmpeg,
+                "-y",
+                "-ss",
+                f"{start_seconds:.3f}",
+                "-i",
+                str(source),
+                "-ss",
+                f"{gameplay_start_seconds:.3f}",
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(gameplay_video),
+                "-t",
+                f"{duration_seconds:.3f}",
+                "-sws_flags",
+                "lanczos",
+            ]
+            top_filter = (
+                "[0:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[top]"
             )
+            bottom_filter = (
+                "[1:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[bottom]"
+            )
+            stack_filter = "[top][bottom]vstack=inputs=2[stacked]"
+            divider_filter = (
+                "[stacked]drawbox=y=958:color=black:width=iw:height=4:t=fill[split_base]"
+            )
+            if sub_escaped:
+                sub_filter = f"[split_base]ass='{sub_escaped}'[v]"
+                filter_complex = (
+                    f"{top_filter};{bottom_filter};{stack_filter};{divider_filter};{sub_filter}"
+                )
+            else:
+                tail = "[split_base]null[v]"
+                filter_complex = (
+                    f"{top_filter};{bottom_filter};{stack_filter};{divider_filter};{tail}"
+                )
+
             command.extend(
                 [
                     "-filter_complex",
-                    video_filter,
+                    filter_complex,
                     "-map",
                     "[v]",
                     "-map",
                     "0:a?",
                 ]
             )
-        elif self.video_layout == "fit_black":
-            if self.allow_upscale:
-                scale_filter = (
-                    "scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2"
-                )
-            else:
-                scale_filter = (
-                    "scale='min(iw,1080)':'min(ih,1920)':"
-                    "force_original_aspect_ratio=decrease:force_divisible_by=2"
-                )
-            video_filter = f"{scale_filter},pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
-            command.extend(
-                [
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "0:a?",
-                    "-vf",
-                    video_filter,
-                ]
-            )
         else:
-            if self.allow_upscale:
-                video_filter = (
-                    "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1"
+            command = [
+                self.ffmpeg,
+                "-y",
+                "-ss",
+                f"{start_seconds:.3f}",
+                "-i",
+                str(source),
+                "-t",
+                f"{duration_seconds:.3f}",
+                "-sws_flags",
+                "lanczos",
+            ]
+            if self.video_layout == "blurred_background":
+                if sub_escaped:
+                    video_filter = (
+                        "[0:v]split=2[bg][fg];"
+                        "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
+                        "crop=1080:1920,boxblur=30:2[blurred];"
+                        "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[front];"
+                        f"[blurred][front]overlay=(W-w)/2:(H-h)/2,setsar=1[base];"
+                        f"[base]ass='{sub_escaped}'[v]"
+                    )
+                else:
+                    video_filter = (
+                        "[0:v]split=2[bg][fg];"
+                        "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
+                        "crop=1080:1920,boxblur=30:2[blurred];"
+                        "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[front];"
+                        "[blurred][front]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
+                    )
+                command.extend(
+                    [
+                        "-filter_complex",
+                        video_filter,
+                        "-map",
+                        "[v]",
+                        "-map",
+                        "0:a?",
+                    ]
+                )
+            elif self.video_layout == "fit_black":
+                if self.allow_upscale:
+                    scale_filter = (
+                        "scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2"
+                    )
+                else:
+                    scale_filter = (
+                        "scale='min(iw,1080)':'min(ih,1920)':"
+                        "force_original_aspect_ratio=decrease:force_divisible_by=2"
+                    )
+                video_filter = f"{scale_filter},pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+                if sub_escaped:
+                    video_filter += f",ass='{sub_escaped}'"
+                command.extend(
+                    [
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "0:a?",
+                        "-vf",
+                        video_filter,
+                    ]
                 )
             else:
-                # Crop the largest native-resolution 9:16 region without inventing pixels.
-                # H.264 requires even dimensions, hence truncation to a multiple of two.
-                video_filter = (
-                    "crop='trunc(min(iw,ih*9/16)/2)*2':'trunc(min(ih,iw*16/9)/2)*2',setsar=1"
+                if self.allow_upscale:
+                    video_filter = (
+                        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1"
+                    )
+                else:
+                    # Crop the largest native-resolution 9:16 region without inventing pixels.
+                    # H.264 requires even dimensions, hence truncation to a multiple of two.
+                    video_filter = (
+                        "crop='trunc(min(iw,ih*9/16)/2)*2':'trunc(min(ih,iw*16/9)/2)*2',setsar=1"
+                    )
+                if sub_escaped:
+                    video_filter += f",ass='{sub_escaped}'"
+                command.extend(
+                    [
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "0:a?",
+                        "-vf",
+                        video_filter,
+                    ]
                 )
-            command.extend(
-                [
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "0:a?",
-                    "-vf",
-                    video_filter,
-                ]
-            )
         command.extend(
             [
                 "-c:v",
@@ -198,7 +273,7 @@ class MediaProcessor:
                 "[blurred][front]overlay=(W-w)/2:(H-h)/2"
             )
             command.extend(["-filter_complex", thumbnail_filter])
-        elif self.video_layout == "fit_black":
+        elif self.video_layout in {"fit_black", "split_gameplay"}:
             thumbnail_filter = (
                 "scale=1280:720:force_original_aspect_ratio=decrease,"
                 "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"

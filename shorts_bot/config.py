@@ -141,19 +141,24 @@ class Settings:
     database_path: Path
     keep_work_files: bool
     delete_uploaded_clips: bool
-    store_bundles_enabled: bool
-    store_bundle_size: int
-    store_bundle_dir: Path
-    r2_account_id: str
-    r2_access_key_id: str
-    r2_secret_access_key: str
-    r2_bucket_name: str
     rights_acknowledged: bool
     links_file: Path
     downloaded_links_log: Path
     links_poll_seconds: int
     credential_check_minutes: int
     pending_retry_jobs_per_cycle: int
+    autopilot_enabled: bool
+    autopilot_poll_minutes: int
+    autopilot_ignore_shorts: bool
+    autopilot_queue_latest_on_start: bool
+    autopilot_channels: tuple[dict[str, str], ...]
+    gameplay_dir: Path
+    gameplay_rotation: tuple[str, ...]
+    enable_gameplay: bool
+    enable_captions: bool
+    caption_font: str
+    caption_font_size: int
+    caption_highlight_colors: tuple[str, ...]
 
     @classmethod
     def from_env(
@@ -169,6 +174,21 @@ class Settings:
         database_path = Path(os.getenv("DATABASE_PATH", str(work_dir / "jobs.db"))).expanduser()
         channel_config_file = Path(os.getenv("CHANNEL_CONFIG_FILE", "channels.toml")).expanduser()
         channel_config = _read_channel_config(channel_config_file)
+        autopilot_section = channel_config.get("autopilot", {})
+        if not isinstance(autopilot_section, dict):
+            autopilot_section = {}
+        raw_channels = autopilot_section.get("channels", [])
+        parsed_channels: list[dict[str, str]] = []
+        if isinstance(raw_channels, list):
+            for ch in raw_channels:
+                if isinstance(ch, dict) and (ch.get("channel_id") or ch.get("handle")):
+                    parsed_channels.append(
+                        {
+                            "name": str(ch.get("name", "")).strip(),
+                            "channel_id": str(ch.get("channel_id", "")).strip(),
+                            "handle": str(ch.get("handle", "")).strip(),
+                        }
+                    )
         legacy_auto_upload = _bool_env("AUTO_UPLOAD", False)
 
         settings = cls(
@@ -210,7 +230,7 @@ class Settings:
             ).expanduser(),
             instagram_caption_mentions=os.getenv(
                 "INSTAGRAM_CAPTION_MENTIONS",
-                "@wzz.unfiltered @precious.tulip1",
+                "@wzz.unfiltered",
             ).strip(),
             instagram_caption_rotation_file=Path(
                 os.getenv("INSTAGRAM_CAPTION_ROTATION_FILE", "instagram_captions.txt")
@@ -267,13 +287,6 @@ class Settings:
             database_path=database_path,
             keep_work_files=_bool_env("KEEP_WORK_FILES", True),
             delete_uploaded_clips=_bool_env("DELETE_UPLOADED_CLIPS", True),
-            store_bundles_enabled=_bool_env("STORE_BUNDLES_ENABLED", True),
-            store_bundle_size=_int_env("STORE_BUNDLE_SIZE", 50),
-            store_bundle_dir=Path(os.getenv("STORE_BUNDLE_DIR", "store-bundles")).expanduser(),
-            r2_account_id=os.getenv("R2_ACCOUNT_ID", "").strip(),
-            r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID", "").strip(),
-            r2_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", "").strip(),
-            r2_bucket_name=os.getenv("R2_BUCKET_NAME", "").strip(),
             rights_acknowledged=_bool_env("RIGHTS_ACKNOWLEDGED", False),
             links_file=Path(os.getenv("LINKS_FILE", "links.txt")).expanduser(),
             downloaded_links_log=Path(
@@ -282,6 +295,40 @@ class Settings:
             links_poll_seconds=_int_env("LINKS_POLL_SECONDS", 30),
             credential_check_minutes=_int_env("CREDENTIAL_CHECK_MINUTES", 60),
             pending_retry_jobs_per_cycle=_int_env("PENDING_RETRY_JOBS_PER_CYCLE", 3),
+            autopilot_enabled=_bool_env(
+                "AUTOPILOT_ENABLED",
+                bool(autopilot_section.get("enabled", False)),
+            ),
+            autopilot_poll_minutes=int(
+                os.getenv("AUTOPILOT_POLL_MINUTES")
+                or autopilot_section.get("poll_interval_minutes", 15)
+            ),
+            autopilot_ignore_shorts=_bool_env(
+                "AUTOPILOT_IGNORE_SHORTS",
+                bool(autopilot_section.get("ignore_shorts", True)),
+            ),
+            autopilot_queue_latest_on_start=_bool_env(
+                "AUTOPILOT_QUEUE_LATEST_ON_START",
+                bool(autopilot_section.get("queue_latest_on_start", False)),
+            ),
+            autopilot_channels=tuple(parsed_channels),
+            gameplay_dir=Path(os.getenv("GAMEPLAY_DIR", "assets/gameplay")).expanduser(),
+            gameplay_rotation=tuple(
+                s.strip()
+                for s in os.getenv("GAMEPLAY_ROTATION", "gta5,minecraft,subway_surfers").split(",")
+                if s.strip()
+            ),
+            enable_gameplay=_bool_env("ENABLE_GAMEPLAY", True),
+            enable_captions=_bool_env("ENABLE_CAPTIONS", True),
+            caption_font=os.getenv("CAPTION_FONT", "Arial").strip(),
+            caption_font_size=_int_env("CAPTION_FONT_SIZE", 64),
+            caption_highlight_colors=tuple(
+                c.strip()
+                for c in os.getenv(
+                    "CAPTION_HIGHLIGHT_COLORS", "&H0066FF00&,&H0000E6FF&,&H00FFFF00&"
+                ).split(",")
+                if c.strip()
+            ),
         )
         settings.validate_common()
         return settings
@@ -297,9 +344,15 @@ class Settings:
             )
         if not 0 <= self.max_shorts_per_video <= 100:
             raise ConfigurationError("MAX_SHORTS_PER_VIDEO must be between 0 and 100.")
-        if self.video_layout not in {"fit_black", "blurred_background", "center_crop"}:
+        if self.video_layout not in {
+            "split_gameplay",
+            "fit_black",
+            "blurred_background",
+            "center_crop",
+        }:
             raise ConfigurationError(
-                "VIDEO_LAYOUT must be fit_black, blurred_background, or center_crop."
+                "VIDEO_LAYOUT must be split_gameplay, fit_black, "
+                "blurred_background, or center_crop."
             )
         if not 14 <= self.video_crf <= 28:
             raise ConfigurationError("VIDEO_CRF must be between 14 and 28.")
@@ -335,25 +388,14 @@ class Settings:
             raise ConfigurationError("INSTAGRAM_GRAPH_API_VERSION must look like v26.0.")
         if not re.fullmatch(r"v\d+\.\d+", self.facebook_graph_api_version):
             raise ConfigurationError("FACEBOOK_GRAPH_API_VERSION must look like v26.0.")
-        if not 2 <= self.store_bundle_size <= 100:
-            raise ConfigurationError("STORE_BUNDLE_SIZE must be between 2 and 100.")
-        r2_values = (
-            self.r2_account_id,
-            self.r2_access_key_id,
-            self.r2_secret_access_key,
-            self.r2_bucket_name,
-        )
-        if any(r2_values) and not all(r2_values):
-            raise ConfigurationError(
-                "R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and "
-                "R2_BUCKET_NAME must all be set together."
-            )
         if not 5 <= self.links_poll_seconds <= 3600:
             raise ConfigurationError("LINKS_POLL_SECONDS must be between 5 and 3600.")
         if not 5 <= self.credential_check_minutes <= 1_440:
             raise ConfigurationError("CREDENTIAL_CHECK_MINUTES must be between 5 and 1440.")
         if not 1 <= self.pending_retry_jobs_per_cycle <= 20:
             raise ConfigurationError("PENDING_RETRY_JOBS_PER_CYCLE must be between 1 and 20.")
+        if not 1 <= self.autopilot_poll_minutes <= 1_440:
+            raise ConfigurationError("AUTOPILOT_POLL_MINUTES must be between 1 and 1440.")
         if (
             self.ytdlp_cookies_from_browser
             and self.ytdlp_cookies_from_browser not in _SUPPORTED_COOKIE_BROWSERS
@@ -486,5 +528,3 @@ class Settings:
         self.links_file.touch(exist_ok=True)
         self.downloaded_links_log.parent.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
-        if self.store_bundles_enabled:
-            self.store_bundle_dir.mkdir(parents=True, exist_ok=True)

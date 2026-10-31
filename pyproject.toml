@@ -9,7 +9,6 @@ description = "A local Groq workflow that turns authorized YouTube videos into S
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "boto3>=1.40,<2",
   "cloudinary>=1.44,<2",
   "google-api-python-client>=2.160,<3",
   "google-auth-httplib2>=0.2,<1",
@@ -33,6 +32,7 @@ dev = [
 shorts-local = "shorts_bot.file_queue:main"
 shorts-cli = "shorts_bot.cli:main"
 shorts-queue = "shorts_bot.file_queue:main"
+shorts-autopilot = "shorts_bot.autopilot:main"
 shorts-auth = "shorts_bot.youtube_auth:main"
 instagram-long-token = "shorts_bot.instagram_token:main"
 

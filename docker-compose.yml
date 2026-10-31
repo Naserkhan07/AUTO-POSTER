@@ -1,0 +1,13 @@
+services:
+  auto-poster:
+    build: .
+    container_name: auto-poster
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./work:/app/work
+      - ./credentials:/app/credentials
+      - ./assets:/app/assets
+      - ./links.txt:/app/links.txt
+      - ./channels.toml:/app/channels.toml
