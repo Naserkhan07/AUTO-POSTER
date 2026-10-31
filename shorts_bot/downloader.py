@@ -170,21 +170,21 @@ class VideoDownloader:
             detail = str(exc)
             authenticated = "cookiefile" in options or "cookiesfrombrowser" in options
             if "sign in to confirm" in detail.casefold() or "bot" in detail.casefold():
-                # Cloud datacenter IPs are blocked by default web client. Retry with TV and mobile client.
-                tv_options = dict(options)
-                tv_options["extractor_args"] = {
-                    "youtube": {"player_client": ["tv", "mweb"]}
+                # Cloud datacenter IPs are blocked by default web client. Retry with android/ios/tv mobile clients.
+                mobile_options = dict(options)
+                mobile_options["extractor_args"] = {
+                    "youtube": {"player_client": ["android", "ios", "tv"]}
                 }
                 try:
-                    info = self._extract_info(url, tv_options)
+                    info = self._extract_info(url, mobile_options)
                 except Exception:
-                    # Also try tv client without cookies if cookies were rejected
+                    # Also try mobile client without cookies if cookies were rejected
                     if authenticated:
-                        tv_clean = dict(tv_options)
-                        tv_clean.pop("cookiefile", None)
-                        tv_clean.pop("cookiesfrombrowser", None)
+                        mobile_clean = dict(mobile_options)
+                        mobile_clean.pop("cookiefile", None)
+                        mobile_clean.pop("cookiesfrombrowser", None)
                         try:
-                            info = self._extract_info(url, tv_clean)
+                            info = self._extract_info(url, mobile_clean)
                         except Exception:
                             raise DownloadError(
                                 f"YouTube download failed: {self._download_error_detail(detail)}"
@@ -193,6 +193,8 @@ class VideoDownloader:
                         raise DownloadError(
                             f"YouTube download failed: {self._download_error_detail(detail)}"
                         ) from exc
+            elif "live event will begin" in detail.casefold() or "premieres in" in detail.casefold():
+                raise DownloadError(f"Scheduled livestream/premiere cannot be downloaded: {detail}")
             elif "requested format is not available" in detail.casefold() and authenticated:
                 # Account cookies can occasionally be assigned a YouTube client experiment that
                 # exposes only SABR/image formats. Retry the exact same bestvideo+bestaudio

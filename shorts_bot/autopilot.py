@@ -156,7 +156,7 @@ class AutopilotService:
             str(max_results),
             "--dump-json",
             "--extractor-args",
-            "youtube:player_client=tv,mweb",
+            "youtube:player_client=android,ios,tv",
         ]
         cookie_file = None
         for cand in [os.environ.get("YTDLP_COOKIE_FILE"), "cookies.txt", "youtube-cookies.txt"]:

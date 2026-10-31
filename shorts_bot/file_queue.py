@@ -297,8 +297,18 @@ async def run_file_queue(
                 job = repository.create(chat_id=0, user_id=0, source_url=url)
                 result = await pipeline.process(job.id)
                 if result.error:
-                    any_failures = True
                     failed_urls_this_session.add(url)
+                    if "live event will begin" in result.error.lower() or "premieres in" in result.error.lower() or "scheduled livestream" in result.error.lower():
+                        # A scheduled livestream cannot be downloaded yet. Remove from links.txt to unblock the pipeline.
+                        try:
+                            lines = settings.links_file.read_text(encoding="utf-8").splitlines()
+                            new_lines = [l for l in lines if l.strip() != url]
+                            settings.links_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+                            print(f"[{job.id}] Removed scheduled livestream from {settings.links_file.name}", flush=True)
+                        except Exception:
+                            pass
+                    else:
+                        any_failures = True
                     if watch:
                         print(
                             f"[{job.id}] URL will not retry again in this session. "
