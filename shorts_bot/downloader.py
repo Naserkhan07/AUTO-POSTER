@@ -331,15 +331,27 @@ class VideoDownloader:
                     try:
                         info = self._extract_info(url, token_options)
                     except yt_dlp.utils.DownloadError as token_exc:
-                        public_detail = self._download_error_detail(str(public_exc))
-                        token_detail = self._download_error_detail(str(token_exc))
-                        raise DownloadError(
-                            "YouTube exposed no separate bestvideo+bestaudio streams with the "
-                            "configured cookies, and both public retries failed. Confirm the WPC "
-                            "PO Token Provider is active and keep its temporary Chrome window "
-                            f"open. Default public retry: {public_detail}. "
-                            f"PO-token client retry: {token_detail}"
-                        ) from token_exc
+                        # Fallback to pytubefix Android progressive stream
+                        try:
+                            return self._download_pytubefix(url, destination)
+                        except Exception:
+                            public_detail = self._download_error_detail(str(public_exc))
+                            token_detail = self._download_error_detail(str(token_exc))
+                            raise DownloadError(
+                                "YouTube exposed no separate bestvideo+bestaudio streams with the "
+                                "configured cookies, and both public retries failed. Confirm the WPC "
+                                "PO Token Provider is active and keep its temporary Chrome window "
+                                f"open. Default public retry: {public_detail}. "
+                                f"PO-token client retry: {token_detail}"
+                            ) from token_exc
+            elif "403" in detail.casefold() or "forbidden" in detail.casefold() or "unable to download video data" in detail.casefold():
+                # 403 Forbidden on CDN stream fragments -> Fallback to pytubefix
+                try:
+                    return self._download_pytubefix(url, destination)
+                except Exception:
+                    raise DownloadError(
+                        f"YouTube download failed: {self._download_error_detail(detail)}"
+                    ) from exc
             else:
                 raise DownloadError(
                     f"YouTube download failed: {self._download_error_detail(detail)}"

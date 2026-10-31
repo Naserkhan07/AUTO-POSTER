@@ -340,7 +340,7 @@ async def run_file_queue(
                     "=================================================================================\n",
                     flush=True,
                 )
-                success = any(j.status.value == "completed" for j in repository.list_recent(limit=5))
+                success = any(j.status.value == "completed" for j in repository.list_recent(0, limit=5))
                 return 0 if (not any_failures or success) else 1
             await asyncio.sleep(settings.links_poll_seconds)
     finally:
