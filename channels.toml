@@ -15,12 +15,12 @@ page_id = "1231108530089378"
 
 # ----------------------------------------------------------------------
 # AI / LLM Configuration
-# Supports Groq (default) or FreeLLMAPI / OpenAI-compatible router
+# Primary Engine: FreeLLMAPI (https://github.com/tashfeenahmed/freellmapi)
 # ----------------------------------------------------------------------
 [ai]
-# base_url = "http://localhost:3001/v1"   # Uncomment to use FreeLLMAPI router
-# api_key  = "freellmapi-key"             # Optional API key
-# model    = "auto"                       # Router model name (default: auto)
+provider = "freellmapi"
+base_url = "http://localhost:3001/v1"   # FreeLLMAPI unified router endpoint
+model    = "auto"                       # Auto-routes across all configured free providers
 
 # ----------------------------------------------------------------------
 # Optimal Audience Timing & Rate-Limit Scheduler

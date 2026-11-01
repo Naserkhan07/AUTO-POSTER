@@ -30,8 +30,7 @@ VERIFIED_GAMEPLAY_SOURCES: dict[str, list[dict[str, str]]] = {
     "subway_surfers": [
         {"id": "QPW3XwBoQlw", "url": "https://www.youtube.com/watch?v=QPW3XwBoQlw", "title": "Subway Surfers High Score Run"},
         {"id": "qKLi8rkRauU", "url": "https://www.youtube.com/watch?v=qKLi8rkRauU", "title": "Subway Surfers Gameplay 60fps"},
-        {"id": "fS3J2hFhU8E", "url": "https://www.youtube.com/watch?v=fS3J2hFhU8E", "title": "Subway Surfers Tokyo Run"},
-        {"id": "k1lPqC3yG48", "url": "https://www.youtube.com/watch?v=k1lPqC3yG48", "title": "Subway Surfers Endless Run"},
+        {"id": "i0M4ARe9v0Y", "url": "https://www.youtube.com/watch?v=i0M4ARe9v0Y", "title": "Subway Surfers Gameplay 4K"},
     ],
 }
 

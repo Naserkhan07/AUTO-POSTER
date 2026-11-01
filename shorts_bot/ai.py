@@ -51,6 +51,7 @@ class AIPlanner:
             self.client = AsyncGroq(api_key=api_key or "freellmapi-key", base_url=self.base_url)
         else:
             self.client = AsyncGroq(api_key=api_key)
+        self.transcribe_client = AsyncGroq(api_key=api_key) if (self.base_url and api_key) else self.client
         self.model = model
         self.fallback_model = fallback_model
         self.transcription_model = transcription_model
@@ -398,7 +399,6 @@ repetition, and return only the corrected JSON object.
                     if (
                         exc.status_code == 400
                         and "json_validate_failed" in detail
-                        and model.startswith("qwen/")
                     ):
                         try:
                             fallback_request = _completion_request(
@@ -471,7 +471,7 @@ repetition, and return only the corrected JSON object.
         result = None
         try:
             with audio_path.open("rb") as audio_file:
-                result = await self.client.audio.transcriptions.create(
+                result = await self.transcribe_client.audio.transcriptions.create(
                     model=self.transcription_model,
                     file=(audio_path.name, audio_file.read()),
                     response_format="verbose_json",
@@ -485,7 +485,7 @@ repetition, and return only the corrected JSON object.
             # Fall back to segment-only if word granularity is unsupported
             try:
                 with audio_path.open("rb") as audio_file:
-                    result = await self.client.audio.transcriptions.create(
+                    result = await self.transcribe_client.audio.transcriptions.create(
                         model=self.transcription_model,
                         file=(audio_path.name, audio_file.read()),
                         response_format="verbose_json",
@@ -493,7 +493,7 @@ repetition, and return only the corrected JSON object.
                         temperature=0.0,
                     )
             except Exception as exc:
-                raise AIError(f"Groq audio transcription failed: {exc}") from exc
+                raise AIError(f"Audio transcription failed: {exc}") from exc
 
         # Cache raw transcription data for ASS captions
         try:
