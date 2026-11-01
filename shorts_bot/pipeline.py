@@ -113,10 +113,11 @@ class WorkflowServices:
                 video_preset=settings.video_preset,
             ),
             planner=AIPlanner(
-                api_key=settings.groq_api_key,
-                model=settings.groq_model,
+                api_key=settings.freellmapi_api_key or settings.groq_api_key,
+                model=settings.freellmapi_model or settings.groq_model,
                 fallback_model=settings.groq_fallback_model,
                 transcription_model=settings.groq_transcription_model,
+                base_url=settings.freellmapi_url,
                 target_duration=settings.clip_duration_seconds,
                 max_transcript_chars=settings.groq_max_transcript_chars,
                 youtube_description_target_chars=settings.youtube_description_target_chars,

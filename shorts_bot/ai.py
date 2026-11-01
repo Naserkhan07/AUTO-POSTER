@@ -38,6 +38,7 @@ class AIPlanner:
         model: str,
         fallback_model: str,
         transcription_model: str,
+        base_url: str = "",
         target_duration: int = 25,
         max_transcript_chars: int = 8_000,
         youtube_description_target_chars: int = 4_200,
@@ -45,7 +46,11 @@ class AIPlanner:
         instagram_hashtags: list[str] | None = None,
         metadata_delay_seconds: int = 22,
     ) -> None:
-        self.client = AsyncGroq(api_key=api_key)
+        self.base_url = (base_url or "").strip()
+        if self.base_url:
+            self.client = AsyncGroq(api_key=api_key or "freellmapi-key", base_url=self.base_url)
+        else:
+            self.client = AsyncGroq(api_key=api_key)
         self.model = model
         self.fallback_model = fallback_model
         self.transcription_model = transcription_model
@@ -57,7 +62,14 @@ class AIPlanner:
         self.metadata_delay_seconds = metadata_delay_seconds
 
     async def check_models(self) -> tuple[str, str]:
-        """Validate Groq access and automatically select active non-OpenAI models."""
+        """Validate AI access and automatically select active models."""
+        if self.base_url:
+            if not self.model or self.model == "qwen/qwen3.6-27b":
+                self.model = "auto"
+            self.fallback_model = self.fallback_model or self.model
+            logger.info("Using FreeLLMAPI/gateway at %s with model '%s'", self.base_url, self.model)
+            return self.model, self.transcription_model
+
         try:
             response = await self.client.models.list()
             available = {
@@ -75,6 +87,10 @@ class AIPlanner:
                 self.model = preferred
             elif qwen_models:
                 self.model = qwen_models[-1]
+            elif "openai/gpt-oss-20b" in available:
+                self.model = "openai/gpt-oss-20b"
+            elif available:
+                self.model = sorted(available)[0]
             else:
                 raise AIError(
                     "No active non-OpenAI Qwen planning model is available on this Groq account."
@@ -82,7 +98,12 @@ class AIPlanner:
         if self.fallback_model not in available:
             self.fallback_model = self.model
         if self.transcription_model not in available:
-            raise AIError(f"Groq transcription model {self.transcription_model} is not available.")
+            if "whisper-large-v3" in available:
+                self.transcription_model = "whisper-large-v3"
+            elif any("whisper" in m for m in available):
+                self.transcription_model = next(m for m in available if "whisper" in m)
+            else:
+                raise AIError(f"Groq transcription model {self.transcription_model} is not available.")
         return self.model, self.transcription_model
 
     async def transcribe(self, audio_path: Path) -> str:
@@ -257,7 +278,7 @@ transcript or source metadata. Prefer concise factual text over repetition or fi
         try:
             payload = await self._request_plan(
                 prompt,
-                max_tokens=1_900,
+                max_tokens=650,
                 system_prompt=metadata_system,
             )
             description_length = len(str(payload.get("description") or ""))
@@ -277,7 +298,7 @@ repetition, and return only the corrected JSON object.
                 try:
                     payload = await self._request_plan(
                         repair_prompt,
-                        max_tokens=2_100,
+                        max_tokens=750,
                         system_prompt=metadata_system,
                     )
                 except Exception:
@@ -335,9 +356,10 @@ repetition, and return only the corrected JSON object.
         models = [self.model]
         if self.fallback_model and self.fallback_model not in models:
             models.append(self.fallback_model)
-        for extra in ("llama-3.1-8b-instant", "llama3-70b-8192", "gemma2-9b-it", "mixtral-8x7b-32768"):
-            if extra not in models:
-                models.append(extra)
+        if not self.base_url:
+            for extra in ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "allam-2-7b"):
+                if extra not in models:
+                    models.append(extra)
 
         last_rate_limit: RateLimitError | None = None
         token_budgets = [max_tokens]

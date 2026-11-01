@@ -165,6 +165,9 @@ class Settings:
     scheduler_max_daily_instagram: int = 10
     scheduler_max_daily_facebook: int = 10
     scheduler_timezone: str = "Asia/Kolkata"
+    freellmapi_url: str = ""
+    freellmapi_api_key: str = ""
+    freellmapi_model: str = ""
 
     @classmethod
     def from_env(
@@ -361,6 +364,23 @@ class Settings:
             scheduler_timezone=str(
                 os.getenv("SCHEDULER_TIMEZONE")
                 or scheduler_section.get("timezone", "Asia/Kolkata")
+            ).strip(),
+            freellmapi_url=str(
+                os.getenv("FREELLMAPI_URL")
+                or os.getenv("LLM_BASE_URL")
+                or os.getenv("OPENAI_BASE_URL")
+                or _nested_string(channel_config, "ai", "base_url")
+            ).strip(),
+            freellmapi_api_key=str(
+                os.getenv("FREELLMAPI_API_KEY")
+                or os.getenv("LLM_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or _nested_string(channel_config, "ai", "api_key")
+            ).strip(),
+            freellmapi_model=str(
+                os.getenv("FREELLMAPI_MODEL")
+                or os.getenv("LLM_MODEL")
+                or _nested_string(channel_config, "ai", "model")
             ).strip(),
         )
         settings.validate_common()

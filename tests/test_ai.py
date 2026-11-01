@@ -189,6 +189,18 @@ async def test_enrich_plan_falls_back_to_heuristic_metadata_on_rate_limit() -> N
     assert "Credit to original creator:" in enriched.instagram_caption
 
 
+def test_ai_planner_initializes_with_freellmapi_base_url() -> None:
+    planner = AIPlanner(
+        api_key="test-freellmapi-key",
+        model="auto",
+        fallback_model="auto",
+        transcription_model="whisper-large-v3-turbo",
+        base_url="http://localhost:3001/v1",
+    )
+    assert planner.base_url == "http://localhost:3001/v1"
+    assert str(planner.client.base_url).rstrip("/") == "http://localhost:3001/v1"
+
+
 async def test_retries_json_generation_with_larger_completion_budget() -> None:
     token_budgets: list[int] = []
 
