@@ -16,6 +16,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free Runner Disk Space
+        run: |
+          echo "Disk space before cleaning:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -a --force || true
+          echo "Disk space after cleaning:"
+          df -h
+
       - name: Set up Cloudflare WARP (Bypass Cloud Datacenter IP Restrictions)
         uses: fscarmen/warp-on-actions@v1.4
         with:
@@ -68,14 +80,30 @@ jobs:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
           python -c '
+          import base64
+          import json
           import os
-          token = os.environ.get("YOUTUBE_TOKEN_JSON", "").strip()
-          if token:
+          raw = os.environ.get("YOUTUBE_TOKEN_JSON", "").strip()
+          token_str = ""
+          if raw:
+              token_str = raw
+              try:
+                  decoded = base64.b64decode(raw).decode("utf-8", errors="ignore")
+                  if "refresh_token" in decoded or "client_id" in decoded:
+                      token_str = decoded
+              except Exception:
+                  pass
+          elif os.path.exists("youtube_token.json"):
+              token_str = open("youtube_token.json", encoding="utf-8").read().strip()
+
+          if token_str:
               with open("youtube_token.json", "w", encoding="utf-8") as f:
-                  f.write(token + "\n")
+                  f.write(token_str + "\n")
               with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_f:
                   env_f.write("UPLOAD_YOUTUBE=true\n")
-              print("YouTube OAuth token successfully configured.")
+              print("✅ YouTube OAuth token successfully configured.")
+          else:
+              print("⚠️ YOUTUBE_TOKEN_JSON secret not configured in GitHub Secrets. YouTube uploads will be skipped until secret is added.")
           '
 
       - name: Setup YouTube Cookies
@@ -113,7 +141,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: assets/gameplay
-          key: gameplay-footage-${{ runner.os }}-v1
+          key: gameplay-footage-${{ runner.os }}-v2
           restore-keys: |
             gameplay-footage-${{ runner.os }}-
 
@@ -128,7 +156,7 @@ jobs:
             work/jobs.db
             work/jobs.db-wal
             work/jobs.db-shm
-            work/jobs
+            work/downloaded-links.log
           key: pipeline-db-state-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             pipeline-db-state-${{ runner.os }}-
@@ -143,6 +171,8 @@ jobs:
           INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
           UPLOAD_FACEBOOK: "true"
           UPLOAD_INSTAGRAM: "true"
+          UPLOAD_YOUTUBE: ${{ env.UPLOAD_YOUTUBE || 'false' }}
+          KEEP_WORK_FILES: "false"
         run: |
           python main.py --once
 
@@ -154,7 +184,7 @@ jobs:
             work/jobs.db
             work/jobs.db-wal
             work/jobs.db-shm
-            work/jobs
+            work/downloaded-links.log
           key: pipeline-db-state-${{ runner.os }}-${{ github.run_id }}
 
       - name: Publish Live Mission Control Dashboard to GitHub Summary

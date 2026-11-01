@@ -365,6 +365,8 @@ class ContentScheduler:
             if last_upload_time:
                 if last_upload_time.tzinfo is not None:
                     last_upload_time = last_upload_time.astimezone(self.tz).replace(tzinfo=None)
+                else:
+                    last_upload_time = last_upload_time.replace(tzinfo=timezone.utc).astimezone(self.tz).replace(tzinfo=None)
                 elapsed_min = (now - last_upload_time).total_seconds() / 60.0
                 if elapsed_min < 35:
                     return (
@@ -397,6 +399,8 @@ class ContentScheduler:
             if last_upload_time:
                 if last_upload_time.tzinfo is not None:
                     last_upload_time = last_upload_time.astimezone(self.tz).replace(tzinfo=None)
+                else:
+                    last_upload_time = last_upload_time.replace(tzinfo=timezone.utc).astimezone(self.tz).replace(tzinfo=None)
                 if last_upload_time >= active_slot.target_time - timedelta(minutes=5):
                     next_slot = self.get_next_slot(platform, now)
                     next_12h = next_slot.target_time.strftime("%I:%M %p")

@@ -344,6 +344,11 @@ class WorkflowPipeline:
                     raise
 
             clips = self.repository.list_clips(job.id)
+            if not self.settings.keep_work_files:
+                if source.path.exists():
+                    source.path.unlink(missing_ok=True)
+                if audio_path.exists():
+                    audio_path.unlink(missing_ok=True)
             first = clips[0]
             archive_path: Path | None = None
             pending_platforms = self._pending_platforms(clips)

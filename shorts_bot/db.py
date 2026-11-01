@@ -574,18 +574,34 @@ class JobRepository:
     def get_platform_upload_count(
         self, platform: str, date_prefix: str | None = None
     ) -> int:
-        from datetime import UTC, datetime
+        from datetime import UTC, datetime, timedelta, timezone
         target_date = date_prefix or datetime.now(UTC).strftime("%Y-%m-%d")
+        ist = timezone(timedelta(hours=5, minutes=30))
         with self._connect() as connection:
-            row = connection.execute(
+            rows = connection.execute(
                 """
-                SELECT COUNT(*) as cnt FROM platform_uploads
-                WHERE platform = ? AND uploaded_at LIKE ?
+                SELECT uploaded_at FROM platform_uploads
+                WHERE platform = ?
                 """,
-                (platform, f"{target_date}%"),
-            ).fetchone()
-            if row and int(row["cnt"]) > 0:
-                return int(row["cnt"])
+                (platform,),
+            ).fetchall()
+            count = 0
+            for r in rows:
+                if not r["uploaded_at"]:
+                    continue
+                raw = str(r["uploaded_at"])
+                if raw.endswith("Z"):
+                    raw = raw[:-1] + "+00:00"
+                try:
+                    dt = datetime.fromisoformat(raw)
+                    dt_ist = dt.astimezone(ist) if dt.tzinfo is not None else dt.replace(tzinfo=UTC).astimezone(ist)
+                    if dt_ist.strftime("%Y-%m-%d") == target_date:
+                        count += 1
+                except Exception:
+                    if raw.startswith(target_date):
+                        count += 1
+            if count > 0:
+                return count
 
             col_map = {
                 "YouTube": "youtube_video_id",
@@ -608,7 +624,7 @@ class JobRepository:
         return 0
 
     def get_last_platform_upload_time(self, platform: str) -> datetime | None:
-        from datetime import datetime
+        from datetime import UTC, datetime
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -624,7 +640,10 @@ class JobRepository:
                     raw = str(row["uploaded_at"])
                     if raw.endswith("Z"):
                         raw = raw[:-1] + "+00:00"
-                    return datetime.fromisoformat(raw).astimezone().replace(tzinfo=None)
+                    dt = datetime.fromisoformat(raw)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=UTC)
+                    return dt
                 except Exception:
                     pass
         return None

@@ -288,12 +288,17 @@ class GameplayManager:
 
         target_path = cat_dir / f"{candidate_id}.mp4"
         logger.info(
-            "[Gameplay] Downloading fresh %s gameplay video: %s...", category, candidate_id
+            "[Gameplay] Downloading fresh %s gameplay video: %s (max 6m section)...", category, candidate_id
         )
+        # Download only a 6-minute section to keep disk footprint tiny (~50MB instead of 4GB)
         dl_cmd = cmd_base + [
             f"https://www.youtube.com/watch?v={candidate_id}",
             "-f",
             "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]/best",
+            "--download-sections",
+            "*00:01:00-00:07:00",
+            "--max-filesize",
+            "100M",
             "--remux-video",
             "mp4",
             "-o",
@@ -302,7 +307,7 @@ class GameplayManager:
         ]
         try:
             dl_res = subprocess.run(
-                dl_cmd, capture_output=True, text=True, timeout=600, check=False
+                dl_cmd, capture_output=True, text=True, timeout=300, check=False
             )
             if dl_res.returncode == 0 and target_path.exists() and target_path.stat().st_size > 0:
                 logger.info(
@@ -310,8 +315,26 @@ class GameplayManager:
                     category,
                     target_path.name,
                 )
+                self._trim_long_clip(target_path, max_duration=360.0)
                 return target_path
             else:
+                # If download-sections failed, try without download-sections but capped filesize
+                alt_dl_cmd = cmd_base + [
+                    f"https://www.youtube.com/watch?v={candidate_id}",
+                    "-f",
+                    "best[height<=720]/best",
+                    "--max-filesize",
+                    "80M",
+                    "--remux-video",
+                    "mp4",
+                    "-o",
+                    str(target_path),
+                    "--no-playlist",
+                ]
+                alt_res = subprocess.run(alt_dl_cmd, capture_output=True, text=True, timeout=300, check=False)
+                if alt_res.returncode == 0 and target_path.exists() and target_path.stat().st_size > 0:
+                    self._trim_long_clip(target_path, max_duration=360.0)
+                    return target_path
                 logger.warning(
                     "[Gameplay] yt-dlp download failed for %s: %s, falling back to pytubefix...",
                     candidate_id,
@@ -335,6 +358,7 @@ class GameplayManager:
                                 category,
                                 target_path.name,
                             )
+                            self._trim_long_clip(target_path, max_duration=360.0)
                             return target_path
                 except Exception:
                     continue
@@ -342,6 +366,35 @@ class GameplayManager:
             logger.warning("[Gameplay] pytubefix fallback for %s failed: %s", candidate_id, pyfix_exc)
 
         return None
+
+    def _trim_long_clip(self, path: Path, max_duration: float = 360.0) -> None:
+        """Trims video to max_duration using ffmpeg fast streamcopy to prevent disk bloat."""
+        if not path.exists():
+            return
+        dur = self.probe_clip_duration(path)
+        if dur > max_duration + 30:
+            trimmed = path.parent / f"{path.stem}_trim{path.suffix}"
+            cmd = [
+                self.ffmpeg,
+                "-y",
+                "-ss",
+                "30",
+                "-i",
+                str(path),
+                "-t",
+                f"{int(max_duration)}",
+                "-c",
+                "copy",
+                str(trimmed),
+            ]
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+                if trimmed.exists() and trimmed.stat().st_size > 0:
+                    path.unlink(missing_ok=True)
+                    trimmed.rename(path)
+            except Exception as exc:
+                logger.debug("Failed to trim long clip %s: %s", path, exc)
+                trimmed.unlink(missing_ok=True)
 
     def select_gameplay(
         self,
