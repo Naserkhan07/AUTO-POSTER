@@ -146,6 +146,8 @@ jobs:
             gameplay-footage-${{ runner.os }}-
 
       - name: Ensure Real Gameplay Footage (GTA V, Minecraft, Subway Surfers)
+        timeout-minutes: 3
+        continue-on-error: true
         run: |
           python -c "from shorts_bot.gameplay import GameplayManager; GameplayManager().ensure_all_categories_ready()"
 

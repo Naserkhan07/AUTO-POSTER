@@ -249,38 +249,40 @@ class GameplayManager:
             cmd_base.extend(["--cookies", str(cookie_file)])
 
         candidate_id: str | None = None
-        logger.info(
-            "[Gameplay] Searching YouTube for new %s footage (avoiding %d used)...",
-            category,
-            len(used),
-        )
-        search_cmd = cmd_base + [
-            "--flat-playlist",
-            "--print",
-            "%(id)s",
-            "--no-playlist",
-            query,
-        ]
-        try:
-            res = subprocess.run(
-                search_cmd, capture_output=True, text=True, timeout=30, check=False
-            )
-            if res.returncode == 0:
-                for line in res.stdout.splitlines():
-                    clean_id = line.strip()
-                    if len(clean_id) == 11 and " " not in clean_id and clean_id not in used:
-                        candidate_id = clean_id
-                        break
-        except Exception as exc:
-            logger.warning("[Gameplay] Search for %s failed: %s", category, exc)
 
-        # Fallback to verified candidate URLs if live search yielded no unused ID
+        # 1. Prefer verified candidate URLs first (guaranteed valid, high-quality, and no-copyright)
+        for item in VERIFIED_GAMEPLAY_SOURCES.get(category, []):
+            vid = item["id"]
+            if vid not in used:
+                candidate_id = vid
+                break
+
+        # 2. Only if all verified candidates were already used, do a fast YouTube search
         if not candidate_id:
-            for item in VERIFIED_GAMEPLAY_SOURCES.get(category, []):
-                vid = item["id"]
-                if vid not in used:
-                    candidate_id = vid
-                    break
+            logger.info(
+                "[Gameplay] Searching YouTube for new %s footage (avoiding %d used)...",
+                category,
+                len(used),
+            )
+            search_cmd = cmd_base + [
+                "--flat-playlist",
+                "--print",
+                "%(id)s",
+                "--no-playlist",
+                query,
+            ]
+            try:
+                res = subprocess.run(
+                    search_cmd, capture_output=True, text=True, timeout=20, check=False
+                )
+                if res.returncode == 0:
+                    for line in res.stdout.splitlines():
+                        clean_id = line.strip()
+                        if len(clean_id) == 11 and " " not in clean_id and clean_id not in used:
+                            candidate_id = clean_id
+                            break
+            except Exception as exc:
+                logger.warning("[Gameplay] Search for %s failed: %s", category, exc)
 
         if not candidate_id:
             logger.warning("[Gameplay] No unused candidate found for %s", category)
@@ -288,53 +290,31 @@ class GameplayManager:
 
         target_path = cat_dir / f"{candidate_id}.mp4"
         logger.info(
-            "[Gameplay] Downloading fresh %s gameplay video: %s (max 6m section)...", category, candidate_id
+            "[Gameplay] Downloading fresh %s gameplay video: %s...", category, candidate_id
         )
-        # Download only a 6-minute section to keep disk footprint tiny (~50MB instead of 4GB)
         dl_cmd = cmd_base + [
             f"https://www.youtube.com/watch?v={candidate_id}",
             "-f",
-            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]/best",
-            "--download-sections",
-            "*00:01:00-00:07:00",
+            "best[height<=720][ext=mp4]/best[ext=mp4]/best",
             "--max-filesize",
-            "100M",
-            "--remux-video",
-            "mp4",
+            "80M",
+            "--no-playlist",
             "-o",
             str(target_path),
-            "--no-playlist",
         ]
         try:
             dl_res = subprocess.run(
-                dl_cmd, capture_output=True, text=True, timeout=300, check=False
+                dl_cmd, capture_output=True, text=True, timeout=60, check=False
             )
             if dl_res.returncode == 0 and target_path.exists() and target_path.stat().st_size > 0:
+                self._trim_long_clip(target_path, max_duration=180.0)
                 logger.info(
                     "[Gameplay] Successfully downloaded fresh %s video: %s",
                     category,
                     target_path.name,
                 )
-                self._trim_long_clip(target_path, max_duration=360.0)
                 return target_path
             else:
-                # If download-sections failed, try without download-sections but capped filesize
-                alt_dl_cmd = cmd_base + [
-                    f"https://www.youtube.com/watch?v={candidate_id}",
-                    "-f",
-                    "best[height<=720]/best",
-                    "--max-filesize",
-                    "80M",
-                    "--remux-video",
-                    "mp4",
-                    "-o",
-                    str(target_path),
-                    "--no-playlist",
-                ]
-                alt_res = subprocess.run(alt_dl_cmd, capture_output=True, text=True, timeout=300, check=False)
-                if alt_res.returncode == 0 and target_path.exists() and target_path.stat().st_size > 0:
-                    self._trim_long_clip(target_path, max_duration=360.0)
-                    return target_path
                 logger.warning(
                     "[Gameplay] yt-dlp download failed for %s: %s, falling back to pytubefix...",
                     candidate_id,
@@ -346,19 +326,19 @@ class GameplayManager:
         # Fallback to pytubefix if yt-dlp failed or was blocked
         try:
             from pytubefix import YouTube
-            for yt_client in ("ANDROID", "TV", "MWEB"):
+            for yt_client in ("ANDROID", "TV"):
                 try:
                     yt = YouTube(f"https://www.youtube.com/watch?v={candidate_id}", client=yt_client)
                     prog = yt.streams.filter(progressive=True).order_by("resolution").desc().first()
                     if prog:
                         prog.download(output_path=str(cat_dir), filename=target_path.name)
                         if target_path.exists() and target_path.stat().st_size > 0:
+                            self._trim_long_clip(target_path, max_duration=180.0)
                             logger.info(
                                 "[Gameplay] Successfully downloaded fresh %s video via pytubefix: %s",
                                 category,
                                 target_path.name,
                             )
-                            self._trim_long_clip(target_path, max_duration=360.0)
                             return target_path
                 except Exception:
                     continue
