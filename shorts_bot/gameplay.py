@@ -17,31 +17,23 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
 
 VERIFIED_GAMEPLAY_SOURCES: dict[str, list[dict[str, str]]] = {
     "gta5": [
-        # Long-running no-copyright GTA parkour/stunt channels — verified public
-        {"id": "wC1B78Jzqmc", "url": "https://www.youtube.com/watch?v=wC1B78Jzqmc", "title": "GTA 5 Stunt Compilation"},
         {"id": "74voi0vlxHE", "url": "https://www.youtube.com/watch?v=74voi0vlxHE", "title": "GTA 5 Stunt Race"},
         {"id": "ZtLrNBdXT7M", "url": "https://www.youtube.com/watch?v=ZtLrNBdXT7M", "title": "GTA 5 Mega Ramp Stunts"},
-        {"id": "kTqBVCBpSBE", "url": "https://www.youtube.com/watch?v=kTqBVCBpSBE", "title": "GTA 5 Epic Ramp"},
         {"id": "j34uP8pL1V4", "url": "https://www.youtube.com/watch?v=j34uP8pL1V4", "title": "GTA 5 Car Parkour"},
         {"id": "l7arSZ41e_0", "url": "https://www.youtube.com/watch?v=l7arSZ41e_0", "title": "GTA 5 Impossible Ramp"},
+        {"id": "wC1B78Jzqmc", "url": "https://www.youtube.com/watch?v=wC1B78Jzqmc", "title": "GTA 5 Stunt Compilation"},
     ],
     "minecraft": [
-        # Well-known public Minecraft parkour clips used widely by creators
-        {"id": "n_Dv4JMiwK8", "url": "https://www.youtube.com/watch?v=n_Dv4JMiwK8", "title": "Minecraft Dropper Gameplay"},
         {"id": "u7kdVe8q5zs", "url": "https://www.youtube.com/watch?v=u7kdVe8q5zs", "title": "Minecraft Speed Parkour"},
         {"id": "XBIaqOm0RKQ", "url": "https://www.youtube.com/watch?v=XBIaqOm0RKQ", "title": "Minecraft Parkour Gameplay"},
+        {"id": "n_Dv4JMiwK8", "url": "https://www.youtube.com/watch?v=n_Dv4JMiwK8", "title": "Minecraft Dropper Gameplay"},
         {"id": "intRX7BRA90", "url": "https://www.youtube.com/watch?v=intRX7BRA90", "title": "Minecraft Spiral Parkour"},
-        {"id": "3wnGFBCO5zs", "url": "https://www.youtube.com/watch?v=3wnGFBCO5zs", "title": "Minecraft Parkour Run"},
-        {"id": "Z9FnvZ-1YZQ", "url": "https://www.youtube.com/watch?v=Z9FnvZ-1YZQ", "title": "Minecraft Gameplay Free Use"},
     ],
     "subway_surfers": [
-        # Very popular public no-copyright Subway Surfers gameplay videos
         {"id": "QPW3XwBoQlw", "url": "https://www.youtube.com/watch?v=QPW3XwBoQlw", "title": "Subway Surfers High Score Run"},
         {"id": "qKLi8rkRauU", "url": "https://www.youtube.com/watch?v=qKLi8rkRauU", "title": "Subway Surfers Gameplay 60fps"},
         {"id": "fS3J2hFhU8E", "url": "https://www.youtube.com/watch?v=fS3J2hFhU8E", "title": "Subway Surfers Tokyo Run"},
         {"id": "k1lPqC3yG48", "url": "https://www.youtube.com/watch?v=k1lPqC3yG48", "title": "Subway Surfers Endless Run"},
-        {"id": "xAx4O-KBKYU", "url": "https://www.youtube.com/watch?v=xAx4O-KBKYU", "title": "Subway Surfers Background"},
-        {"id": "4lmRQBLWJ60", "url": "https://www.youtube.com/watch?v=4lmRQBLWJ60", "title": "Subway Surfers Gameplay No Copyright"},
     ],
 }
 

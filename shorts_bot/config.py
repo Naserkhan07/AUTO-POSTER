@@ -160,7 +160,7 @@ class Settings:
     caption_font_size: int
     caption_highlight_colors: tuple[str, ...]
     scheduler_enabled: bool = True
-    scheduler_advance_prep_minutes: int = 30
+    scheduler_advance_prep_minutes: int = 60
     scheduler_max_daily_youtube: int = 10
     scheduler_max_daily_instagram: int = 10
     scheduler_max_daily_facebook: int = 10
@@ -344,7 +344,7 @@ class Settings:
             ),
             scheduler_advance_prep_minutes=int(
                 os.getenv("SCHEDULER_ADVANCE_PREP_MINUTES")
-                or scheduler_section.get("advance_prep_minutes", 30)
+                or scheduler_section.get("advance_prep_minutes", 60)
             ),
             scheduler_max_daily_youtube=int(
                 os.getenv("SCHEDULER_MAX_DAILY_YOUTUBE")

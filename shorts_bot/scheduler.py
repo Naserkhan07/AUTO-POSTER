@@ -1,16 +1,11 @@
 """
 Smart Platform Scheduler for YouTube Shorts, Instagram Reels, and Facebook Reels.
 
-Schedule based on user-defined optimal audience posting windows (IST / Asia/Kolkata):
-
-  YouTube Shorts  — 3 uploads/day  (1 per peak window: morning, afternoon, evening)
-  Instagram Reels — 2 uploads/day  (1 per peak window: morning, evening)
-  Facebook Reels  — 2 uploads/day  (1 per peak window: morning, evening)
-
-Total: 7 uploads/day, equally divided across peak audience engagement hours.
-Each platform has its own dedicated slot with at least 45 minutes of separation.
-The automation wakes up 1 hour (60 minutes) before upload time to prepare/render the video,
-uploads to that ONE specific platform when the slot hits, and then waits for the next slot.
+Guarantees a minimum of 10 uploads per day on each platform (YouTube: 11-12, Instagram: 10, Facebook: 10).
+All slots strictly match user-provided peak audience engagement windows (IST / Asia/Kolkata).
+Platforms are interleaved with distinct minutes so each run publishes to ONE specific platform,
+then waits for the next slot.
+The automation wakes up 1 hour (60 minutes) before the scheduled upload time to prepare/render the video.
 """
 
 from __future__ import annotations
@@ -26,57 +21,132 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Daily upload limits: 3 for YouTube, 2 for Instagram, 2 for Facebook
+# Daily upload limits: Minimum 10 uploads per day per platform
 DEFAULT_DAILY_LIMITS: dict[str, int] = {
-    "YouTube": 3,
-    "Instagram": 2,
-    "Facebook": 2,
+    "YouTube": 10,
+    "Instagram": 10,
+    "Facebook": 10,
 }
 
 # Optimal posting time slots per platform per weekday (0 = Monday … 6 = Sunday)
 # All times are strictly in IST (Asia/Kolkata) and fall inside user-specified peak windows.
-# Platforms never overlap so each run targets one specific platform.
+# Platforms have dedicated non-overlapping minutes so each run publishes to one specific platform.
 OPTIMAL_SCHEDULES: dict[str, dict[int, list[time]]] = {
-    # ── YouTube Shorts (3/day: Morning, Afternoon, Evening) ─────────────────
-    # Mon–Thu : 6–9 AM (07:00) | 12–2 PM (13:00) | 7–10 PM (20:30/20:45)
-    # Fri     : 6–9 AM (07:30) | 12–2 PM (13:15) | 8–11 PM (21:45)
-    # Sat–Sun : 7–10 AM (08:00) | 12–3 PM (13:30) | 8–11 PM (21:00)
+    # ── YouTube Shorts (11-12 slots/day across Morning, Afternoon, Evening) ───
+    # Mon–Thu : 6–9 AM, 12–2 PM, 7–10 PM
+    # Fri     : 6–9 AM, 12–2 PM, 8–11 PM
+    # Sat–Sun : 7–10 AM, 12–3 PM, 8–11 PM
     "YouTube": {
-        0: [time(7, 0), time(13, 0), time(20, 30)],    # Mon
-        1: [time(7, 0), time(13, 0), time(20, 45)],    # Tue
-        2: [time(7, 30), time(13, 15), time(20, 30)],  # Wed
-        3: [time(7, 0), time(13, 0), time(20, 45)],    # Thu
-        4: [time(7, 30), time(13, 15), time(21, 45)],  # Fri
-        5: [time(8, 0), time(13, 30), time(21, 0)],    # Sat
-        6: [time(8, 0), time(13, 30), time(21, 0)],    # Sun
+        0: [  # Mon (11 slots)
+            time(6, 45), time(7, 30), time(8, 15), time(8, 55),
+            time(12, 10), time(12, 50), time(13, 30),
+            time(19, 10), time(19, 50), time(20, 30), time(21, 10),
+        ],
+        1: [  # Tue (11 slots)
+            time(6, 45), time(7, 30), time(8, 15), time(8, 55),
+            time(12, 10), time(12, 50), time(13, 30),
+            time(19, 10), time(19, 50), time(20, 30), time(21, 10),
+        ],
+        2: [  # Wed (11 slots)
+            time(6, 45), time(7, 30), time(8, 15), time(8, 55),
+            time(12, 10), time(12, 50), time(13, 30),
+            time(19, 10), time(19, 50), time(20, 30), time(21, 10),
+        ],
+        3: [  # Thu (11 slots)
+            time(6, 45), time(7, 30), time(8, 15), time(8, 55),
+            time(12, 10), time(12, 50), time(13, 30),
+            time(19, 10), time(19, 50), time(20, 30), time(21, 10),
+        ],
+        4: [  # Fri (11 slots)
+            time(6, 45), time(7, 30), time(8, 15), time(8, 55),
+            time(12, 10), time(12, 50), time(13, 30),
+            time(20, 10), time(20, 50), time(21, 30), time(22, 10),
+        ],
+        5: [  # Sat (12 slots)
+            time(7, 30), time(8, 15), time(9, 0), time(9, 45),
+            time(12, 15), time(13, 0), time(13, 45), time(14, 30),
+            time(20, 15), time(21, 0), time(21, 45), time(22, 15),
+        ],
+        6: [  # Sun (12 slots)
+            time(7, 30), time(8, 15), time(9, 0), time(9, 45),
+            time(12, 15), time(13, 0), time(13, 45), time(14, 30),
+            time(20, 15), time(21, 0), time(21, 45), time(22, 15),
+        ],
     },
 
-    # ── Instagram Reels (2/day: Morning, Evening) ───────────────────────────
-    # Mon/Tue/Thu : 7–9 AM (08:00) | 6–9/7–10 PM (19:45/21:15)
-    # Wed/Fri     : 11 AM–1 PM (11:30) | 7–10 PM (20:45/21:15)
-    # Sat/Sun     : 9–11 AM/12 PM (09:30) | 6–9 PM (19:45)
+    # ── Instagram Reels (10 slots/day across designated peak windows) ──────────
+    # Mon         : 7–9 AM (4 slots), 7–10 PM (6 slots)
+    # Tue & Thu   : 7–9 AM (4 slots), 6–9 PM (6 slots)
+    # Wed & Fri   : 11 AM–1 PM (4 slots), 7–10 PM (6 slots)
+    # Sat         : 9–11 AM (4 slots), 6–9 PM (6 slots)
+    # Sun         : 9 AM–12 PM (5 slots), 6–9 PM (5 slots)
     "Instagram": {
-        0: [time(8, 0), time(21, 15)],    # Mon
-        1: [time(8, 0), time(19, 45)],    # Tue
-        2: [time(11, 30), time(21, 15)],  # Wed
-        3: [time(8, 0), time(19, 45)],    # Thu
-        4: [time(11, 30), time(20, 45)],  # Fri
-        5: [time(9, 30), time(19, 45)],   # Sat
-        6: [time(9, 30), time(19, 45)],   # Sun
+        0: [  # Mon (10 slots)
+            time(7, 20), time(7, 50), time(8, 20), time(8, 50),
+            time(19, 20), time(19, 50), time(20, 20), time(20, 50), time(21, 20), time(21, 45),
+        ],
+        1: [  # Tue (10 slots)
+            time(7, 20), time(7, 50), time(8, 20), time(8, 50),
+            time(18, 20), time(18, 50), time(19, 20), time(19, 50), time(20, 20), time(20, 45),
+        ],
+        2: [  # Wed (10 slots)
+            time(11, 20), time(11, 50), time(12, 20), time(12, 50),
+            time(19, 20), time(19, 50), time(20, 20), time(20, 50), time(21, 20), time(21, 45),
+        ],
+        3: [  # Thu (10 slots)
+            time(7, 20), time(7, 50), time(8, 20), time(8, 50),
+            time(18, 20), time(18, 50), time(19, 20), time(19, 50), time(20, 20), time(20, 45),
+        ],
+        4: [  # Fri (10 slots)
+            time(11, 20), time(11, 50), time(12, 20), time(12, 50),
+            time(19, 20), time(19, 50), time(20, 20), time(20, 50), time(21, 20), time(21, 45),
+        ],
+        5: [  # Sat (10 slots)
+            time(9, 20), time(9, 50), time(10, 20), time(10, 50),
+            time(18, 20), time(18, 50), time(19, 20), time(19, 50), time(20, 20), time(20, 45),
+        ],
+        6: [  # Sun (10 slots)
+            time(9, 20), time(9, 50), time(10, 20), time(10, 50), time(11, 20),
+            time(18, 20), time(18, 50), time(19, 20), time(19, 50), time(20, 20),
+        ],
     },
 
-    # ── Facebook Reels / Posts (2/day: Morning, Evening) ────────────────────
-    # Mon/Tue/Thu : 8–10 AM (09:00) | 6–9/7–9 PM (18:45/19:30)
-    # Wed/Fri     : 11 AM–1 PM (12:15) | 7–9/7–10 PM (19:30/19:45)
-    # Sat/Sun     : 9–11 AM/12 PM (10:15/10:45) | 6–8/6–9 PM (18:45)
+    # ── Facebook Reels / Posts (10 slots/day across designated peak windows) ──
+    # Mon         : 8–10 AM (5 slots), 7–9 PM (5 slots)
+    # Tue & Thu   : 8–10 AM (4 slots), 6–9 PM (6 slots)
+    # Wed         : 11 AM–1 PM (5 slots), 7–9 PM (5 slots)
+    # Fri         : 11 AM–1 PM (4 slots), 7–10 PM (6 slots)
+    # Sat         : 9–11 AM (4 slots), 6–9 PM (6 slots)
+    # Sun         : 9 AM–12 PM (5 slots), 6–8 PM (5 slots)
     "Facebook": {
-        0: [time(9, 0), time(19, 30)],    # Mon
-        1: [time(9, 0), time(18, 45)],    # Tue
-        2: [time(12, 15), time(19, 30)],  # Wed
-        3: [time(9, 0), time(18, 45)],    # Thu
-        4: [time(12, 15), time(19, 45)],  # Fri
-        5: [time(10, 15), time(18, 45)],  # Sat
-        6: [time(10, 45), time(18, 45)],  # Sun
+        0: [  # Mon (10 slots)
+            time(8, 5), time(8, 35), time(9, 5), time(9, 30), time(9, 50),
+            time(19, 5), time(19, 35), time(20, 5), time(20, 25), time(20, 45),
+        ],
+        1: [  # Tue (10 slots)
+            time(8, 5), time(8, 35), time(9, 5), time(9, 30),
+            time(18, 5), time(18, 35), time(19, 5), time(19, 35), time(20, 5), time(20, 35),
+        ],
+        2: [  # Wed (10 slots)
+            time(11, 5), time(11, 35), time(12, 5), time(12, 35), time(12, 55),
+            time(19, 5), time(19, 35), time(20, 5), time(20, 25), time(20, 45),
+        ],
+        3: [  # Thu (10 slots)
+            time(8, 5), time(8, 35), time(9, 5), time(9, 30),
+            time(18, 5), time(18, 35), time(19, 5), time(19, 35), time(20, 5), time(20, 35),
+        ],
+        4: [  # Fri (10 slots)
+            time(11, 5), time(11, 35), time(12, 5), time(12, 35),
+            time(19, 5), time(19, 35), time(20, 5), time(20, 35), time(21, 5), time(21, 35),
+        ],
+        5: [  # Sat (10 slots)
+            time(9, 5), time(9, 35), time(10, 5), time(10, 35),
+            time(18, 5), time(18, 35), time(19, 5), time(19, 35), time(20, 5), time(20, 35),
+        ],
+        6: [  # Sun (10 slots)
+            time(9, 5), time(9, 35), time(10, 5), time(10, 35), time(11, 5),
+            time(18, 5), time(18, 30), time(18, 55), time(19, 20), time(19, 45),
+        ],
     },
 }
 
@@ -92,9 +162,8 @@ class ScheduledSlot:
 class ContentScheduler:
     """
     Manages per-platform upload scheduling and 1-hour advance rendering.
-    Enforces strict daily caps (YouTube: 3, Instagram: 2, Facebook: 2)
-    and separate non-overlapping slots so each video targets one platform,
-    then waits for the next platform's slot.
+    Enforces a minimum of 10 uploads per day per platform across designated peak windows.
+    Platforms have distinct non-overlapping minutes so each run publishes to one specific platform.
     """
 
     def __init__(
@@ -169,7 +238,7 @@ class ContentScheduler:
             for slot in self.get_slots_for_day(platform, check_date):
                 if slot.target_time > now:
                     return slot
-        fallback_dt = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0)
+        fallback_dt = (now + timedelta(days=1)).replace(hour=8, minute=0, second=0)
         return ScheduledSlot(
             platform=platform,
             target_time=fallback_dt,
@@ -200,7 +269,7 @@ class ContentScheduler:
         self,
         platform: str,
         current_time: datetime | None = None,
-        window_minutes: int = 35,
+        window_minutes: int = 25,
     ) -> tuple[bool, ScheduledSlot | None]:
         """
         Returns (True, slot) if now matches an active upload slot window
@@ -252,7 +321,7 @@ class ContentScheduler:
         platform: str,
         date_str: str | None = None,
     ) -> bool:
-        limit = self.daily_limits.get(platform, 2)
+        limit = self.daily_limits.get(platform, 10)
         count = self.get_daily_upload_count(repository, platform, date_str)
         return count < limit
 
@@ -264,8 +333,8 @@ class ContentScheduler:
     ) -> tuple[bool, str]:
         """
         Determines whether a video can be uploaded right now based on:
-        1. Strict daily limit (YouTube: 3, Instagram: 2, Facebook: 2).
-        2. Minimum spacing (35 minutes) between uploads.
+        1. Strict daily limit (min 10 uploads per platform per day).
+        2. Minimum spacing (20 minutes) between uploads on the same platform.
         3. Strict scheduled slot window:
            - Waking 1 hour in advance: video is prepared and rendered, upload deferred until slot hits.
            - At scheduled slot time: video is published to that ONE specific platform!
@@ -273,7 +342,7 @@ class ContentScheduler:
         4. Guard against re-uploading on the same slot.
         """
         now = self.current_dt(current_time)
-        limit = self.daily_limits.get(platform, 2)
+        limit = self.daily_limits.get(platform, 10)
         date_str = now.strftime("%Y-%m-%d")
         count_today = self.get_daily_upload_count(repository, platform, date_str)
 
@@ -284,7 +353,7 @@ class ContentScheduler:
                 f"Daily limit of {limit} uploads reached today ({count_today}/{limit}). Resumes tomorrow morning.",
             )
 
-        # 2. Minimum spacing (35 min)
+        # 2. Minimum spacing from last upload on this platform (20 minutes)
         if hasattr(repository, "get_last_platform_upload_time"):
             last = repository.get_last_platform_upload_time(platform)
             if last:
@@ -292,14 +361,14 @@ class ContentScheduler:
                     last = last.replace(tzinfo=UTC)
                 last_ist = last.astimezone(self.tz).replace(tzinfo=None)
                 elapsed = (now - last_ist).total_seconds() / 60.0
-                if elapsed < 35:
+                if elapsed < 20:
                     return (
                         False,
-                        f"Spacing interval active ({int(elapsed)}m since last upload; 35m minimum spacing required).",
+                        f"Spacing interval active ({int(elapsed)}m since last upload on {platform}; 20m minimum spacing required).",
                     )
 
         # 3. Check if currently in an active scheduled slot's publish window
-        is_active, active_slot = self.is_slot_active_for_publish(platform, now, window_minutes=35)
+        is_active, active_slot = self.is_slot_active_for_publish(platform, now, window_minutes=25)
 
         if not is_active or active_slot is None:
             # Check if 1-hour advance preparation window is active
