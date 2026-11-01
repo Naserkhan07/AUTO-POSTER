@@ -18,11 +18,16 @@ page_id = "1231108530089378"
 # ----------------------------------------------------------------------
 [scheduler]
 enabled = true                  # Enforces optimal time slots and daily safety caps
-timezone = "Asia/Kolkata"       # Timezone for audience schedule slots (IST, UTC+05:30)
-advance_prep_minutes = 30       # Automatically prepares and renders clips 30m before upload
-max_daily_youtube = 10          # Min 10 YouTube uploads/day (evenly spaced across peak hours)
-max_daily_instagram = 10        # Min 10 Instagram uploads/day (evenly spaced across peak hours)
-max_daily_facebook = 10         # Min 10 Facebook uploads/day (evenly spaced across peak hours)
+timezone = "Asia/Kolkata"       # All times are in IST (UTC+05:30)
+advance_prep_minutes = 60       # Wake up 60 min before slot to prepare/render video
+
+# Max uploads per day per platform — evenly spread across defined slots:
+#   YouTube  : 3 slots/day  (morning / afternoon / evening)
+#   Instagram: 2 slots/day  (morning / evening)
+#   Facebook : 2 slots/day  (morning / evening)
+max_daily_youtube   = 3
+max_daily_instagram = 2
+max_daily_facebook  = 2
 
 # ----------------------------------------------------------------------
 # Hands-Free Channel Auto-Pilot
