@@ -162,6 +162,33 @@ async def test_accepts_concise_grounded_metadata_after_one_repair() -> None:
     assert "Concise factual caption" in enriched.instagram_caption
 
 
+async def test_enrich_plan_falls_back_to_heuristic_metadata_on_rate_limit() -> None:
+    class FailingCompletions:
+        async def create(self, **kwargs):  # noqa: ANN003, ANN201
+            response = httpx.Response(
+                429,
+                request=httpx.Request("POST", "https://api.groq.com/test"),
+            )
+            raise RateLimitError("daily limit", response=response, body={})
+
+    planner = AIPlanner(
+        api_key="test-key",
+        model="primary-model",
+        fallback_model="fallback-model",
+        transcription_model="whisper-large-v3-turbo",
+    )
+    planner.client = SimpleNamespace(  # type: ignore[assignment]
+        chat=SimpleNamespace(completions=FailingCompletions())
+    )
+    base = ShortPlan(0, 25, "Base Title", "", "")
+    enriched = await planner.enrich_plan(base, source(), "[0.00-25.00] A factual clip")
+
+    assert enriched.title != ""
+    assert "Original video produced and created by" in enriched.description
+    assert "#Shorts" in enriched.description
+    assert "Credit to original creator:" in enriched.instagram_caption
+
+
 async def test_retries_json_generation_with_larger_completion_budget() -> None:
     token_budgets: list[int] = []
 

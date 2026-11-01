@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import re
 from pathlib import Path
@@ -11,6 +12,8 @@ from groq import APIStatusError, AsyncGroq, RateLimitError
 
 from .errors import AIError
 from .models import ShortPlan, SourceVideo
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are an expert short-form video editor.
 Choose one compelling, self-contained, contiguous excerpt from the timestamped transcript.
@@ -284,10 +287,20 @@ repetition, and return only the corrected JSON object.
                 "Groq AI metadata generation rate-limited or failed (%s); using clean heuristic metadata.", exc
             )
             clean_title = (source.title.split("|")[0].split("-")[0].strip()) or source.title
+            uploader = source.uploader or "Original Creator"
             payload = {
                 "title": f"{clean_title[:80]}",
-                "description": f"{source.title}\n\nOriginal content by {source.uploader}.\n\n#Shorts #Reels #Trending",
-                "instagram_caption": f"{source.title}\n\nCredit: {source.uploader}",
+                "description": (
+                    f"{source.title}\n\n"
+                    f"Original video produced and created by {uploader}. "
+                    f"Watch full video and explore more content on their official channel.\n\n"
+                    f"#Shorts #Trending #Viral #Highlights"
+                ),
+                "instagram_caption": (
+                    f"{clean_title}\n\n"
+                    f"Credit to original creator: {uploader}. "
+                    f"Check out their channel for the full video!"
+                ),
             }
         # If the repair is still shorter, accept it rather than blocking the clip or padding it
         # with repetitive/invented text. Platform limits remain hard maximums, not quality targets.
@@ -322,7 +335,7 @@ repetition, and return only the corrected JSON object.
         models = [self.model]
         if self.fallback_model and self.fallback_model not in models:
             models.append(self.fallback_model)
-        for extra in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"):
+        for extra in ("llama-3.1-8b-instant", "llama3-70b-8192", "gemma2-9b-it", "mixtral-8x7b-32768"):
             if extra not in models:
                 models.append(extra)
 
@@ -344,10 +357,12 @@ repetition, and return only the corrected JSON object.
                     response = await self.client.chat.completions.create(**request)
                     content = response.choices[0].message.content
                     if not content:
-                        raise AIError(f"Groq model {model} returned an empty editing plan.")
+                        logger.warning("Groq model %s returned empty editing plan; trying next.", model)
+                        break
                     return _parse_json_object(content)
                 except RateLimitError as exc:
                     last_rate_limit = exc
+                    logger.warning("Groq model %s rate limited (%s); trying fallback models.", model, exc)
                     break
                 except APIStatusError as exc:
                     detail = str(exc).lower()
@@ -375,29 +390,37 @@ repetition, and return only the corrected JSON object.
                                 **fallback_request
                             )
                             fallback_content = fallback_response.choices[0].message.content
-                            if not fallback_content:
-                                raise AIError(f"Groq model {model} returned an empty editing plan.")
-                            return _parse_json_object(fallback_content)
-                        except AIError:
-                            raise
-                        except Exception as fallback_exc:
-                            raise AIError(
-                                f"Groq JSON retry with {model} failed: {fallback_exc}"
-                            ) from fallback_exc
+                            if fallback_content:
+                                return _parse_json_object(fallback_content)
+                        except Exception:
+                            pass
                     if exc.status_code == 413:
                         raise _PromptTooLargeError(str(exc)) from exc
-                    raise AIError(f"Groq clip planning with {model} failed: {exc}") from exc
-                except AIError:
-                    raise
+                    logger.warning(
+                        "Groq model %s returned status %s (%s); trying fallback models.",
+                        model,
+                        exc.status_code,
+                        exc,
+                    )
+                    break
                 except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
-                    raise AIError(f"Groq model {model} returned an invalid editing plan.") from exc
+                    logger.warning(
+                        "Groq model %s returned invalid editing plan (%s); trying fallback models.",
+                        model,
+                        exc,
+                    )
+                    break
                 except Exception as exc:
-                    raise AIError(f"Groq clip planning with {model} failed: {exc}") from exc
+                    logger.warning(
+                        "Groq model %s request failed (%s); trying fallback models.",
+                        model,
+                        exc,
+                    )
+                    break
 
-        raise AIError(
-            "Groq daily rate limit reached for the configured planning models. "
-            f"Try again after the reset or change GROQ_MODEL. Details: {last_rate_limit}"
-        ) from last_rate_limit
+        if last_rate_limit:
+            raise last_rate_limit
+        raise AIError(f"All configured Groq models ({', '.join(models)}) failed.")
 
     @staticmethod
     def _compress_audio(audio_path: Path) -> Path:

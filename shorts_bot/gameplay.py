@@ -19,9 +19,7 @@ VERIFIED_GAMEPLAY_SOURCES: dict[str, list[dict[str, str]]] = {
     "gta5": [
         {"id": "74voi0vlxHE", "url": "https://www.youtube.com/watch?v=74voi0vlxHE", "title": "GTA 5 Stunt Race"},
         {"id": "ZtLrNBdXT7M", "url": "https://www.youtube.com/watch?v=ZtLrNBdXT7M", "title": "GTA 5 Mega Ramp Stunts"},
-        {"id": "j34uP8pL1V4", "url": "https://www.youtube.com/watch?v=j34uP8pL1V4", "title": "GTA 5 Car Parkour"},
-        {"id": "l7arSZ41e_0", "url": "https://www.youtube.com/watch?v=l7arSZ41e_0", "title": "GTA 5 Impossible Ramp"},
-        {"id": "wC1B78Jzqmc", "url": "https://www.youtube.com/watch?v=wC1B78Jzqmc", "title": "GTA 5 Stunt Compilation"},
+        {"id": "QqRRG1ZfsAs", "url": "https://www.youtube.com/watch?v=QqRRG1ZfsAs", "title": "GTA 5 Mega Ramp Gameplay"},
     ],
     "minecraft": [
         {"id": "u7kdVe8q5zs", "url": "https://www.youtube.com/watch?v=u7kdVe8q5zs", "title": "Minecraft Speed Parkour"},
